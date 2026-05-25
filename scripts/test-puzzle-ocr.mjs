@@ -10,6 +10,17 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const FIXTURES = {
+  dark2: {
+    image: "puzzle-dark2-5x5.png",
+    expected: ["THANK", "YOUFO", "RALLT", "HESQU", "ARES_"],
+    critical: [
+      { r: 0, c: 0, letter: "T" },
+      { r: 1, c: 1, letter: "O" },
+      { r: 2, c: 0, letter: "R" },
+      { r: 3, c: 1, letter: "E" },
+      { r: 4, c: 0, letter: "A" },
+    ],
+  },
   light: {
     image: "puzzle-5x5.png",
     expected: ["MTDEK", "HOOJI", "OEYLN", "PHRDA", "ISBOR"],

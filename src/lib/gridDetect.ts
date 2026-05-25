@@ -621,12 +621,20 @@ function collectBlobs(frame: ImageFrame, theme: FrameTheme): Blob[] {
   const satTiles = filterMainCluster(findTilesBySaturation(frame.data));
 
   const ranked = [
-    // Edge contours get a small bonus but are outranked by dark/gray on known themes
-    { blobs: edgeTiles, score: tileBlobScore(edgeTiles) + 1 },
+    // On dark boards, edge/letter blobs often catch letter regions (~16 blobs)
+    // rather than tile regions, causing 4×4 mis-detection. Treat them as last
+    // resort there, exactly like letter tiles.
+    {
+      blobs: edgeTiles,
+      score: theme === "dark" ? -1 : tileBlobScore(edgeTiles) + 1,
+    },
     { blobs: darkTiles, score: tileBlobScore(darkTiles) + (theme === "dark" ? 12 : 0) },
     { blobs: grayTiles, score: tileBlobScore(grayTiles) + (theme === "light" ? 4 : 0) },
     { blobs: colorTiles, score: tileBlobScore(colorTiles) + 2 },
-    { blobs: satTiles, score: tileBlobScore(satTiles) + 1 },
+    {
+      blobs: satTiles,
+      score: theme === "dark" ? -1 : tileBlobScore(satTiles) + 1,
+    },
     {
       blobs: letterTiles,
       score: theme === "dark" ? -1 : tileBlobScore(letterTiles),
@@ -759,7 +767,9 @@ export async function detectGridLayout(
   }
 
   if (!best) {
-    const size = hintSize ?? 4;
+    // 5×5 is by far the most common Squaredle grid; only fall back to 4 if
+    // the hintSize explicitly says so (user override).
+    const size = hintSize ?? 5;
     const cell = Math.min(frame.width, frame.height) / size;
     const cells: CellRegion[][] = Array.from({ length: size }, (_, r) =>
       Array.from({ length: size }, (_, c) => ({
