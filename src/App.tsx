@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FormatToast } from "./components/FormatToast";
 import { LetterGrid } from "./components/LetterGrid";
 import { WordResults } from "./components/WordResults";
+import {
+  clipboardHasTextOnly,
+  getClipboardImageFile,
+  isTextInputTarget,
+} from "./lib/clipboardPaste";
 import {
   DICTIONARY_LABELS,
   loadDictionary,
@@ -44,6 +50,8 @@ export default function App() {
   const [selectedWord, setSelectedWord] = useState<FoundWord | null>(null);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [formatToast, setFormatToast] = useState(false);
+  const handleImageUploadRef = useRef<(file: File) => void>(() => {});
 
   useEffect(() => {
     setDictLoading(true);
@@ -169,6 +177,34 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
+  handleImageUploadRef.current = (file: File) => {
+    void handleImageUpload(file);
+  };
+
+  const dismissFormatToast = useCallback(() => setFormatToast(false), []);
+
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const data = e.clipboardData;
+      const imageFile = getClipboardImageFile(data);
+
+      if (imageFile) {
+        e.preventDefault();
+        if (!dictReady || busy) return;
+        handleImageUploadRef.current(imageFile);
+        return;
+      }
+
+      if (clipboardHasTextOnly(data) && !isTextInputTarget(e.target)) {
+        e.preventDefault();
+        setFormatToast(true);
+      }
+    };
+
+    document.addEventListener("paste", onPaste, true);
+    return () => document.removeEventListener("paste", onPaste, true);
+  }, [dictReady, busy]);
+
   const rows = grid.length;
   const cols = grid[0]?.length ?? 0;
 
@@ -184,6 +220,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <FormatToast visible={formatToast} onDismiss={dismissFormatToast} />
       <header className="header">
         <div>
           <p className="eyebrow">Word search assistant</p>
@@ -252,7 +289,8 @@ export default function App() {
             />
             <span className="upload-label">{progressLabel}</span>
             <span className="upload-hint">
-              Works with plain grids, 5×5 corner-cut, and irregular shapes
+              Or paste a screenshot with Ctrl+V · supports corner-cut and irregular
+              grids
             </span>
           </label>
 

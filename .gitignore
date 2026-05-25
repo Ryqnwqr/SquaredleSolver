@@ -6,3 +6,5 @@ tsconfig.tsbuildinfo
 .vite
 playwright-report
 test-results
+
+.vercel
