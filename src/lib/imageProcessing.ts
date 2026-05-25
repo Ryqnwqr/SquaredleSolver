@@ -381,13 +381,83 @@ export function findColoredTileBlobs(image: ImageData): Blob[] {
     const min = Math.min(r, g, b);
     const sat = max === 0 ? 0 : (max - min) / max;
     const lum = (r + g + b) / 3;
-    if (sat > 0.12 && lum > 40 && lum < 235) mask[p] = 1;
+    if (sat > 0.08 && lum > 28 && lum < 245) mask[p] = 1;
   }
 
+  return extractSquareBlobs(mask, width, height, minArea, maxArea, 12);
+}
+
+export type FrameTheme = "dark" | "light";
+
+/** Classify screenshot as dark board (black bg, light text) vs light UI. */
+export function estimateFrameTheme(image: ImageData): FrameTheme {
+  const { data } = image;
+  let dark = 0;
+  let bright = 0;
+  let mid = 0;
+  let n = 0;
+  const lumSamples: number[] = [];
+
+  for (let i = 0; i < data.length; i += 4) {
+    const lum = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    n++;
+    if (lum < 60) dark++;
+    if (lum > 175) bright++;
+    if (lum >= 60 && lum <= 175) mid++;
+    if ((i >> 2) % 9 === 0) lumSamples.push(lum);
+  }
+  if (n === 0) return "light";
+
+  const darkRatio = dark / n;
+  const brightRatio = bright / n;
+  lumSamples.sort((a, b) => a - b);
+  const medianLum = lumSamples[lumSamples.length >> 1] ?? 128;
+
+  if (medianLum < 72) return "dark";
+  if (darkRatio > 0.38 && brightRatio > 0.0015) return "dark";
+  if (darkRatio > 0.55 && mid / n < 0.35) return "dark";
+  return "light";
+}
+
+/** Dark Squaredle boards: charcoal tiles on black, white letters (exclude bright text). */
+export function findDarkTileBlobs(image: ImageData): Blob[] {
+  const { width, height, data } = image;
+  const mask = new Uint8Array(width * height);
+  const imgArea = width * height;
+  const minArea = imgArea * 0.0012;
+  const maxArea = imgArea * 0.14;
+
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const sat = max === 0 ? 0 : (max - min) / max;
+    const lum = (r + g + b) / 3;
+    if (lum > 140) continue;
+    if (lum < 10) continue;
+    if (sat < 0.2 && lum >= 16 && lum <= 115) mask[p] = 1;
+  }
+
+  return extractSquareBlobs(mask, width, height, minArea, maxArea, 14);
+}
+
+function extractSquareBlobs(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  minArea: number,
+  maxArea: number,
+  minSide: number
+): Blob[] {
   const visited = new Uint8Array(mask.length);
   const blobs: Blob[] = [];
   const neighbors = [
-    [-1, 0], [1, 0], [0, -1], [0, 1],
+    [-1, 0],
+    [1, 0],
+    [0, -1],
+    [0, 1],
   ];
 
   for (let y = 1; y < height - 1; y++) {
@@ -397,7 +467,11 @@ export function findColoredTileBlobs(image: ImageData): Blob[] {
 
       const stack = [start];
       visited[start] = 1;
-      let minX = x, maxX = x, minY = y, maxY = y, area = 0;
+      let minX = x;
+      let maxX = x;
+      let minY = y;
+      let maxY = y;
+      let area = 0;
 
       while (stack.length) {
         const idx = stack.pop()!;
@@ -427,8 +501,8 @@ export function findColoredTileBlobs(image: ImageData): Blob[] {
         area <= maxArea &&
         ratio > 0.55 &&
         ratio < 1.8 &&
-        w >= 12 &&
-        h >= 12
+        w >= minSide &&
+        h >= minSide
       ) {
         blobs.push({
           x: minX,
@@ -464,63 +538,7 @@ export function findGrayTileBlobs(image: ImageData): Blob[] {
     if (sat < 0.14 && lum > 85 && lum < 235) mask[p] = 1;
   }
 
-  const visited = new Uint8Array(mask.length);
-  const blobs: Blob[] = [];
-  const neighbors = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      const start = y * width + x;
-      if (!mask[start] || visited[start]) continue;
-
-      const stack = [start];
-      visited[start] = 1;
-      let minX = x, maxX = x, minY = y, maxY = y, area = 0;
-
-      while (stack.length) {
-        const idx = stack.pop()!;
-        const px = idx % width;
-        const py = (idx / width) | 0;
-        area++;
-        minX = Math.min(minX, px);
-        maxX = Math.max(maxX, px);
-        minY = Math.min(minY, py);
-        maxY = Math.max(maxY, py);
-        for (const [dx, dy] of neighbors) {
-          const nx = px + dx;
-          const ny = py + dy;
-          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-          const nidx = ny * width + nx;
-          if (!mask[nidx] || visited[nidx]) continue;
-          visited[nidx] = 1;
-          stack.push(nidx);
-        }
-      }
-
-      const w = maxX - minX + 1;
-      const h = maxY - minY + 1;
-      const ratio = w / h;
-      if (
-        area >= minArea &&
-        area <= maxArea &&
-        ratio > 0.55 &&
-        ratio < 1.8 &&
-        w >= 14 &&
-        h >= 14
-      ) {
-        blobs.push({
-          x: minX,
-          y: minY,
-          w,
-          h,
-          cx: (minX + maxX) / 2,
-          cy: (minY + maxY) / 2,
-          area,
-        });
-      }
-    }
-  }
-  return blobs;
+  return extractSquareBlobs(mask, width, height, minArea, maxArea, 14);
 }
 
 export function cluster1D(values: number[], tolerance: number): number[] {

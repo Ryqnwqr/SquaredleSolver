@@ -1,5 +1,6 @@
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import { BLOCKED, detectGridLayout, type CellRegion, type GridDetection } from "./gridDetect";
+import type { FrameTheme } from "./imageProcessing";
 import { normalizeOcrToLetter } from "./letterNormalize";
 import {
   analyzeShape,
@@ -9,6 +10,7 @@ import {
   scoreB,
   scoreE,
   scoreI,
+  resolveDarkAmbiguousR,
   scoreP,
   scoreR,
   type ShapeMetrics,
@@ -39,10 +41,14 @@ async function getWorker(): Promise<Worker> {
 }
 
 /** Mask Squaredle hint counts in tile corners */
-function maskCornerHints(ctx: CanvasRenderingContext2D, size: number): void {
+function maskCornerHints(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  color = "#ffffff"
+): void {
   const h = Math.floor(size * 0.24);
   const w = Math.floor(size * 0.22);
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = color;
   ctx.fillRect(0, size - h, w, h);
   ctx.fillRect(size - w, size - h, w, h);
   ctx.fillRect(0, 0, w, Math.floor(size * 0.12));
@@ -83,12 +89,14 @@ function preprocessCellFromFrame(
   frameCanvas: HTMLCanvasElement,
   cell: CellRegion,
   frameW: number,
-  frameH: number
+  frameH: number,
+  theme: FrameTheme = "light"
 ): string[] {
   // Exclude Squaredle corner hint numbers (red/grey counts in bottom corners)
-  const padX = Math.floor(cell.w * 0.14);
-  const padY = Math.floor(cell.h * 0.12);
-  const padBottom = Math.floor(cell.h * 0.22);
+  const inset = theme === "dark" ? 0.2 : 0.14;
+  const padX = Math.floor(cell.w * inset);
+  const padY = Math.floor(cell.h * (theme === "dark" ? 0.16 : 0.12));
+  const padBottom = Math.floor(cell.h * (theme === "dark" ? 0.18 : 0.22));
   const sx = Math.max(0, cell.x + padX);
   const sy = Math.max(0, cell.y + padY);
   const sw = Math.max(1, Math.min(frameW - sx, cell.w - padX * 2));
@@ -159,6 +167,49 @@ function preprocessCellFromFrame(
     ctx.putImageData(imageData, 0, 0);
     maskCornerHints(ctx, size);
     variants.push(canvas.toDataURL("image/png"));
+
+    if (theme === "dark") {
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, size, size);
+      ctx.drawImage(
+        frameCanvas,
+        sx,
+        sy,
+        sw,
+        sh,
+        size * 0.12,
+        size * 0.1,
+        size * 0.76,
+        size * 0.76
+      );
+      // Dark background: mask corners black
+      maskCornerHints(ctx, size, "#000000");
+      variants.push(canvas.toDataURL("image/png"));
+
+      const darkData = ctx.getImageData(0, 0, size, size);
+      const dpx = darkData.data;
+      for (let i = 0; i < dpx.length; i += 4) {
+        const g = Math.round(
+          0.299 * dpx[i] + 0.587 * dpx[i + 1] + 0.114 * dpx[i + 2]
+        );
+        const v = g > 72 ? 0 : 255;
+        dpx[i] = dpx[i + 1] = dpx[i + 2] = v;
+        dpx[i + 3] = 255;
+      }
+      ctx.putImageData(darkData, 0, 0);
+      maskCornerHints(ctx, size);
+      variants.push(canvas.toDataURL("image/png"));
+
+      for (let i = 0; i < dpx.length; i += 4) {
+        dpx[i] = 255 - dpx[i];
+        dpx[i + 1] = 255 - dpx[i + 1];
+        dpx[i + 2] = 255 - dpx[i + 2];
+      }
+      ctx.putImageData(darkData, 0, 0);
+      // Dark background: mask corners black so they don't contaminate shape analysis
+      maskCornerHints(ctx, size, "#000000");
+      variants.push(canvas.toDataURL("image/png"));
+    }
   }
 
   return variants;
@@ -193,7 +244,8 @@ function collectCandidates(data: {
 
 async function recognizeLetter(
   worker: Worker,
-  variants: string[]
+  variants: string[],
+  theme: FrameTheme = "light"
 ): Promise<string> {
   const votes: Array<{ letter: string; weight: number }> = [];
   let shapeMetrics: ShapeMetrics | null = null;
@@ -207,14 +259,20 @@ async function recognizeLetter(
       votes.push({ letter, weight: baseConf + conf });
     }
 
-    if (!shapeMetrics) {
-      try {
-        const canvas = await canvasFromDataUrl(dataUrl);
-        shapeMetrics = analyzeShape(canvas);
-        shapeCanvas = canvas;
-      } catch {
-        /* skip */
+    try {
+      const canvas = await canvasFromDataUrl(dataUrl);
+      const metrics = analyzeShape(canvas);
+      if (metrics) {
+        if (theme === "dark") {
+          shapeMetrics = metrics;
+          shapeCanvas = canvas;
+        } else if (!shapeMetrics) {
+          shapeMetrics = metrics;
+          shapeCanvas = canvas;
+        }
       }
+    } catch {
+      /* skip */
     }
   }
 
@@ -226,7 +284,7 @@ async function recognizeLetter(
   }
 
   if (votes.length > 0) {
-    let result = resolveLetter(votes, shapeMetrics);
+    let result = resolveLetter(votes, shapeMetrics, theme);
     if (shapeMetrics) {
       const e = scoreE(shapeMetrics);
       const p = scoreP(shapeMetrics);
@@ -246,6 +304,9 @@ async function recognizeLetter(
         !shapeMetrics.hasMiddleBar
       ) {
         result = "I";
+      }
+      if (theme === "dark" && result === "R") {
+        result = resolveDarkAmbiguousR(result, shapeMetrics);
       }
     }
     return result;
@@ -317,9 +378,10 @@ export async function extractGridFromImage(
       frame.canvas,
       cell,
       frame.width,
-      frame.height
+      frame.height,
+      detection.theme
     );
-    const letter = await recognizeLetter(worker, variants);
+    const letter = await recognizeLetter(worker, variants, detection.theme);
     grid[r][c] = letter || "?";
   }
 

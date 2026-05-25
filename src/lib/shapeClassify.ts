@@ -12,6 +12,8 @@ export interface ShapeMetrics {
   midRowSpan: number;
   /** Ink in bottom-right quadrant (R leg) */
   bottomRightRatio: number;
+  /** Ink in bottom-left quadrant (symmetric with bottomRight for O; low for R) */
+  bottomLeftRatio: number;
   /** Ink in top-right quadrant (P/R bowl) */
   topRightRatio: number;
   topBand: number;
@@ -23,12 +25,13 @@ function isInkPixel(
   data: Uint8ClampedArray,
   width: number,
   x: number,
-  y: number
+  y: number,
+  threshold: number,
+  darkBg: boolean
 ): boolean {
   const i = (y * width + x) * 4;
   const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-  // 165 catches faded Squaredle tiles; 140 keeps crisp letters tight
-  return gray < 165;
+  return darkBg ? gray > threshold : gray < threshold;
 }
 
 export function analyzeShape(canvas: HTMLCanvasElement): ShapeMetrics | null {
@@ -37,6 +40,33 @@ export function analyzeShape(canvas: HTMLCanvasElement): ShapeMetrics | null {
 
   const { width, height } = canvas;
   const { data } = ctx.getImageData(0, 0, width, height);
+
+  // Determine background polarity by sampling the middle 50% of each border edge.
+  // We skip corners because maskCornerHints() fills them with white even on
+  // inverted (dark-background) variants, which would skew the average.
+  const midLo = Math.floor(width * 0.25);
+  const midHi = Math.floor(width * 0.75);
+  const midLoY = Math.floor(height * 0.25);
+  const midHiY = Math.floor(height * 0.75);
+  let borderSum = 0;
+  let borderCount = 0;
+  for (let x = midLo; x <= midHi; x++) {
+    for (const y of [0, height - 1]) {
+      const i = (y * width + x) * 4;
+      borderSum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      borderCount++;
+    }
+  }
+  for (let y = midLoY; y <= midHiY; y++) {
+    for (const x of [0, width - 1]) {
+      const i = (y * width + x) * 4;
+      borderSum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      borderCount++;
+    }
+  }
+  const borderAvg = borderCount > 0 ? borderSum / borderCount : 128;
+  const darkBg = borderAvg < 80;
+  const inkThreshold = darkBg ? 128 : 165;
 
   const colCounts = new Array<number>(width).fill(0);
   const rowCounts = new Array<number>(height).fill(0);
@@ -48,7 +78,7 @@ export function analyzeShape(canvas: HTMLCanvasElement): ShapeMetrics | null {
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      if (isInkPixel(data, width, x, y)) {
+      if (isInkPixel(data, width, x, y, inkThreshold, darkBg)) {
         ink++;
         colCounts[x]++;
         rowCounts[y]++;
@@ -73,6 +103,7 @@ export function analyzeShape(canvas: HTMLCanvasElement): ShapeMetrics | null {
   let rightInk = 0;
   let topRightInk = 0;
   let bottomRightInk = 0;
+  let bottomLeftInk = 0;
   const brX0 = minX + Math.floor(w * 0.55);
   const brY0 = minY + Math.floor(h * 0.55);
   const trX0 = minX + Math.floor(w * 0.45);
@@ -80,11 +111,12 @@ export function analyzeShape(canvas: HTMLCanvasElement): ShapeMetrics | null {
 
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
-      if (!isInkPixel(data, width, x, y)) continue;
+      if (!isInkPixel(data, width, x, y, inkThreshold, darkBg)) continue;
       if (x < midX) leftInk++;
       else rightInk++;
       if (x >= trX0 && y <= trY1) topRightInk++;
       if (x >= brX0 && y >= brY0) bottomRightInk++;
+      if (x < brX0 && y >= brY0) bottomLeftInk++;
     }
   }
 
@@ -97,7 +129,7 @@ export function analyzeShape(canvas: HTMLCanvasElement): ShapeMetrics | null {
     const split = minX + w * 0.55;
     const rightStart = maxX - w * 0.28;
     for (let x = minX; x <= maxX; x++) {
-      if (!isInkPixel(data, width, x, y)) continue;
+      if (!isInkPixel(data, width, x, y, inkThreshold, darkBg)) continue;
       span++;
       if (firstX < 0) firstX = x;
       lastX = x;
@@ -152,6 +184,7 @@ export function analyzeShape(canvas: HTMLCanvasElement): ShapeMetrics | null {
     isRound,
     midRowSpan: midRow.rowSpan,
     bottomRightRatio: bottomRightInk / ink,
+    bottomLeftRatio: bottomLeftInk / ink,
     topRightRatio: topRightInk / ink,
     topBand,
     midBand,
@@ -166,22 +199,31 @@ export function scoreO(m: ShapeMetrics): number {
   if (!m.hasMiddleBar) s += 0.2;
   if (m.midRowRightRatio > 0.18) s += 0.15;
   if (m.midRowSpan < 0.35) s += 0.1;
+  if (m.bottomRightRatio < 0.08 && m.symmetry > 0.58) s += 0.22;
+  if (m.bottomRightRatio < 0.12 && !m.hasMiddleBar) s += 0.28;
+  // O is closed/symmetric: bottom-left ≈ bottom-right; R has leg only on right
+  const blr = m.bottomLeftRatio;
+  const brr = m.bottomRightRatio;
+  if (blr > 0.06 && brr > 0.06 && blr / (brr + 0.001) > 0.55) s += 0.35;
   return Math.min(1, s);
 }
 
 export function scoreE(m: ShapeMetrics): number {
-  if (m.midRowSpan < 0.38) return 0;
+  if (m.midRowSpan < 0.32) return 0;
   if (
     m.topRightRatio > 0.1 &&
     m.bottomRightRatio < 0.11 &&
-    m.midRowSpan < 0.42
+    m.midRowSpan < 0.42 &&
+    !m.hasMiddleBar
   ) {
     return 0;
   }
   let s = 0;
   if (m.hasMiddleBar) s += 0.4;
-  if (m.midBand > 0.35 && m.topBand > 0.3 && m.botBand > 0.3) s += 0.3;
-  if (m.midRowSpan > 0.45) s += 0.2;
+  if (m.midBand > 0.28 && m.topBand > 0.22 && m.botBand > 0.22) s += 0.3;
+  if (m.midRowSpan > 0.4) s += 0.22;
+  if (m.bottomRightRatio < 0.09 && m.midRowSpan > 0.38) s += 0.15;
+  if (m.bottomRightRatio < 0.12 && m.midRowSpan > 0.36) s += 0.25;
   if (m.leftHalfRatio > 0.5) s += 0.1;
   if (m.bottomRightRatio < 0.12) s += 0.05;
   return Math.min(1, s);
@@ -198,12 +240,18 @@ export function scoreP(m: ShapeMetrics): number {
 }
 
 export function scoreR(m: ShapeMetrics): number {
+  if (m.bottomRightRatio < 0.1) return 0.1;
+  // If bottom is symmetric (O) and no middle bar, not R
+  const blr = m.bottomLeftRatio;
+  const brr = m.bottomRightRatio;
+  const bottomSymmetric = blr > 0.06 && brr > 0.06 && blr / (brr + 0.001) > 0.55;
+  if (bottomSymmetric && !m.hasMiddleBar && m.symmetry > 0.9) return 0.15;
   let s = 0;
   if (m.leftHalfRatio > 0.32 && m.topRightRatio > 0.08) s += 0.25;
-  if (m.bottomRightRatio > 0.08) s += 0.4;
+  if (brr > 0.08) s += 0.4;
   if (m.midRowSpan < 0.4) s += 0.15;
   if (!m.hasMiddleBar || m.midRowSpan < 0.35) s += 0.1;
-  if (m.botBand > 0.15 && m.bottomRightRatio > 0.08) s += 0.15;
+  if (m.botBand > 0.15 && brr > 0.08) s += 0.15;
   return Math.min(1, s);
 }
 
@@ -267,9 +315,31 @@ function pickBestShape(m: ShapeMetrics, candidates?: string[]): string {
   return ranked[0]?.letter ?? "";
 }
 
+/** On dark boards OCR often returns R for O/E — pick by shape when ambiguous. */
+export function resolveDarkAmbiguousR(
+  ocrLetter: string,
+  metrics: ShapeMetrics
+): string {
+  if (ocrLetter !== "R") return ocrLetter;
+  const br = metrics.bottomRightRatio;
+  const rShape = scoreR(metrics);
+
+  if (br > 0.155 && rShape > 0.58) return "R";
+
+  const ranked = (["O", "E", "R"] as const)
+    .map((letter) => ({ letter, score: shapePrior(letter, metrics) }))
+    .sort((a, b) => b.score - a.score);
+
+  if (ranked[0].letter !== "R") return ranked[0].letter;
+  if (metrics.isRound || br < 0.11) return "O";
+  if (metrics.hasMiddleBar || metrics.midRowSpan > 0.4) return "E";
+  return "R";
+}
+
 export function resolveLetter(
   votes: Array<{ letter: string; weight: number }>,
-  metrics: ShapeMetrics | null
+  metrics: ShapeMetrics | null,
+  theme: "dark" | "light" = "light"
 ): string {
   const scores = new Map<string, number>();
   for (const { letter, weight } of votes) {
@@ -336,6 +406,31 @@ export function resolveLetter(
       scores.set("I", Math.max(scores.get("I") ?? 0, bVote) + iShape * 55);
       scores.set("B", bVote * 0.08);
     }
+
+    if (theme === "dark") {
+      const rVote = scores.get("R") ?? 0;
+      const rShape = scoreR(metrics);
+      const oShape = scoreO(metrics);
+      const eShape = scoreE(metrics);
+      // Only suppress R when the vote is weak (shape-guess only, no real Tesseract confidence).
+      // A genuine Tesseract R vote produces weights >> 65; shape-only is exactly 65.
+      const tesseractConfidentR = rVote > 150;
+      if (!tesseractConfidentR) {
+        for (const letter of ["O", "E"] as const) {
+          const prior = shapePrior(letter, metrics);
+          if (prior > 0.35) {
+            scores.set(letter, (scores.get(letter) ?? 0) + prior * 55);
+          }
+        }
+        if (rVote > 0) {
+          if (rShape < 0.42 || metrics.bottomRightRatio < 0.11) {
+            scores.set("R", rVote * 0.02);
+          } else if (oShape > rShape || eShape > rShape) {
+            scores.set("R", rVote * 0.08);
+          }
+        }
+      }
+    }
   }
 
   let best = "";
@@ -348,6 +443,17 @@ export function resolveLetter(
   }
 
   if (metrics) {
+    if (theme === "dark" && best === "R") {
+      // If Tesseract was confident about R, trust it
+      const rRawScore = scores.get("R") ?? 0;
+      const tesseractConfidentR = rRawScore > 150;
+      if (tesseractConfidentR) return "R";
+      if (metrics.bottomRightRatio > 0.19 && scoreR(metrics) > 0.58) {
+        return "R";
+      }
+      return pickBestShape(metrics, ["O", "E"]);
+    }
+
     const e = scoreE(metrics);
     const p = scoreP(metrics);
     const r = scoreR(metrics);

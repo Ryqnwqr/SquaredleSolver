@@ -8,23 +8,39 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const IMAGE = join(__dirname, "..", "test-fixtures", "puzzle-5x5.png");
 
-const EXPECTED = [
-  "MTDEK",
-  "HOOJI",
-  "OEYLN",
-  "PHRDA",
-  "ISBOR",
-];
+const FIXTURES = {
+  light: {
+    image: "puzzle-5x5.png",
+    expected: ["MTDEK", "HOOJI", "OEYLN", "PHRDA", "ISBOR"],
+    critical: [
+      { r: 3, c: 0, letter: "P" },
+      { r: 3, c: 2, letter: "R" },
+      { r: 1, c: 3, letter: "J" },
+      { r: 3, c: 1, letter: "H" },
+      { r: 4, c: 0, letter: "I" },
+    ],
+  },
+  dark: {
+    image: "puzzle-dark-5x5.png",
+    // Row 5 col 5 is "!" which is not a valid Squaredle letter; skip it with null
+    expected: ["THANK", "YOUFO", "RALLT", "HESQU", "ARES_"],
+    critical: [
+      { r: 0, c: 0, letter: "T" },
+      { r: 1, c: 1, letter: "O" },
+      { r: 2, c: 0, letter: "R" },
+      { r: 3, c: 1, letter: "E" },
+      { r: 4, c: 0, letter: "A" },
+      { r: 4, c: 2, letter: "E" },
+    ],
+  },
+};
 
-const CRITICAL = [
-  { r: 3, c: 0, letter: "P" },
-  { r: 3, c: 2, letter: "R" },
-  { r: 1, c: 3, letter: "J" },
-  { r: 3, c: 1, letter: "H" },
-  { r: 4, c: 0, letter: "I" },
-];
+const fixtureKey = process.env.TEST_FIXTURE ?? "light";
+const fixture = FIXTURES[fixtureKey] ?? FIXTURES.light;
+const IMAGE = join(__dirname, "..", "test-fixtures", fixture.image);
+const EXPECTED = fixture.expected;
+const CRITICAL = fixture.critical;
 
 function toDataUrl(path) {
   const buf = readFileSync(path);
@@ -54,11 +70,22 @@ try {
     const { extractGridFromImage } = await import("/src/lib/ocr.ts");
     const { normalizeGrid } = await import("/src/lib/solver.ts");
     const out = await extractGridFromImage(src, 5);
-    return normalizeGrid(out.grid);
+    return {
+      grid: normalizeGrid(out.grid),
+      method: out.detection.method,
+      theme: out.detection.theme,
+      rows: out.detection.rows,
+      cols: out.detection.cols,
+    };
   }, dataUrl);
 
+  console.log(
+    `\nDetection: ${result.theme} theme, ${result.rows}×${result.cols}, method=${result.method}`
+  );
+  const grid = result.grid;
+
   let errors = 0;
-  const lines = result.map((row) => row.join(""));
+  const lines = grid.map((row) => row.join(""));
 
   console.log("\nDetected grid:");
   for (let r = 0; r < lines.length; r++) {
@@ -71,8 +98,9 @@ try {
 
   for (let r = 0; r < EXPECTED.length; r++) {
     for (let c = 0; c < EXPECTED[r].length; c++) {
-      const got = result[r]?.[c] ?? "?";
       const want = EXPECTED[r][c];
+      if (want === "_") continue; // skip unrecognizable non-letter cells
+      const got = grid[r]?.[c] ?? "?";
       if (got !== want) {
         console.log(`  MISMATCH row ${r + 1} col ${c + 1}: got "${got}", want "${want}"`);
         errors++;
@@ -82,7 +110,7 @@ try {
 
   console.log("\nCritical cells:");
   for (const { r, c, letter } of CRITICAL) {
-    const got = result[r]?.[c] ?? "?";
+    const got = grid[r]?.[c] ?? "?";
     const ok = got === letter;
     console.log(`  (${r + 1},${c + 1}) ${letter}: ${ok ? "OK" : `FAIL got ${got}`}`);
     if (!ok) errors++;

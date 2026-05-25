@@ -3,9 +3,12 @@ import {
   boxBlur,
   cluster1D,
   edgeProfile,
+  estimateFrameTheme,
   findColoredTileBlobs,
+  findDarkTileBlobs,
   findGrayTileBlobs,
   findLetterBlobs,
+  type FrameTheme,
   findPeaks,
   invertBinary,
   loadImageFrame,
@@ -37,6 +40,7 @@ export interface GridDetection {
   bounds: { x: number; y: number; w: number; h: number };
   confidence: number;
   method: string;
+  theme: FrameTheme;
   frame: ImageFrame;
 }
 
@@ -144,6 +148,54 @@ function finalizeCandidate(candidate: GridCandidate, tileCount: number): GridCan
       Math.min(1, candidate.confidence + squareBonus + sparsePenalty + extraLinePenalty)
     ),
   };
+}
+
+/** Evenly split the puzzle bounding box (dark / merged tile detection). */
+function buildGridFromBlobBounds(
+  blobs: Blob[],
+  rows: number,
+  cols: number
+): GridCandidate | null {
+  const tiles = filterTileLikeBlobs(filterMainCluster(blobs));
+  if (tiles.length < 4) return null;
+
+  const pad = 4;
+  const minX = Math.max(0, Math.min(...tiles.map((t) => t.x)) - pad);
+  const minY = Math.max(0, Math.min(...tiles.map((t) => t.y)) - pad);
+  const maxX = Math.max(...tiles.map((t) => t.x + t.w)) + pad;
+  const maxY = Math.max(...tiles.map((t) => t.y + t.h)) + pad;
+  const totalW = maxX - minX;
+  const totalH = maxY - minY;
+  if (totalW < 40 || totalH < 40) return null;
+
+  const cellW = totalW / cols;
+  const cellH = totalH / rows;
+  const cells: CellRegion[][] = [];
+
+  for (let r = 0; r < rows; r++) {
+    const row: CellRegion[] = [];
+    for (let c = 0; c < cols; c++) {
+      row.push({
+        x: Math.round(minX + c * cellW),
+        y: Math.round(minY + r * cellH),
+        w: Math.round(cellW),
+        h: Math.round(cellH),
+        active: true,
+      });
+    }
+    cells.push(row);
+  }
+
+  return finalizeCandidate(
+    {
+      rows,
+      cols,
+      cells,
+      confidence: 0.72,
+      method: "uniform-bounds",
+    },
+    tiles.length
+  );
 }
 
 function buildGridFromTileBlobs(blobs: Blob[]): GridCandidate | null {
@@ -514,7 +566,16 @@ function cropToPuzzleRegion(frame: ImageFrame, blobs: Blob[]): ImageFrame {
   };
 }
 
-function collectBlobs(frame: ImageFrame): Blob[] {
+function tileBlobScore(blobs: Blob[]): number {
+  const tiles = filterTileLikeBlobs(filterMainCluster(blobs));
+  const n = tiles.length;
+  if (n < 9 || n > 49) return -1;
+  const squareBonus = n >= 16 && n <= 36 ? 8 : 0;
+  const exact25 = n === 25 ? 6 : 0;
+  return n + squareBonus + exact25;
+}
+
+function collectBlobs(frame: ImageFrame, theme: FrameTheme): Blob[] {
   const gray = toGrayscale(frame.data);
   const blurred = boxBlur(gray, frame.width, frame.height, 2);
 
@@ -525,23 +586,42 @@ function collectBlobs(frame: ImageFrame): Blob[] {
     invertBinary(adaptiveThreshold(blurred, frame.width, frame.height, 16, 10)),
   ];
 
-  let best: Blob[] = [];
-  for (const binary of attempts) {
-    const blobs = findLetterBlobs(binary, frame.width, frame.height);
-    if (blobs.length > best.length) best = blobs;
+  if (theme === "dark") {
+    attempts.push(
+      adaptiveThreshold(blurred, frame.width, frame.height, 28, 2),
+      invertBinary(adaptiveThreshold(blurred, frame.width, frame.height, 28, 2)),
+      adaptiveThreshold(blurred, frame.width, frame.height, 36, 5)
+    );
   }
 
-  const grayTiles = findGrayTileBlobs(frame.data);
-  const colorTiles = findColoredTileBlobs(frame.data);
+  let bestLetter: Blob[] = [];
+  for (const binary of attempts) {
+    const blobs = findLetterBlobs(binary, frame.width, frame.height);
+    if (blobs.length > bestLetter.length) bestLetter = blobs;
+  }
 
-  const tileCandidates = [grayTiles, colorTiles, best].sort(
+  const darkTiles = filterMainCluster(findDarkTileBlobs(frame.data));
+  const grayTiles = filterMainCluster(findGrayTileBlobs(frame.data));
+  const colorTiles = filterMainCluster(findColoredTileBlobs(frame.data));
+  const letterTiles = filterMainCluster(bestLetter);
+
+  const ranked = [
+    { blobs: darkTiles, score: tileBlobScore(darkTiles) + (theme === "dark" ? 12 : 0) },
+    { blobs: grayTiles, score: tileBlobScore(grayTiles) + (theme === "light" ? 4 : 0) },
+    { blobs: colorTiles, score: tileBlobScore(colorTiles) + 2 },
+    {
+      blobs: letterTiles,
+      score: theme === "dark" ? -1 : tileBlobScore(letterTiles),
+    },
+  ].sort((a, b) => b.score - a.score);
+
+  const winner = ranked[0];
+  if (winner.score > 0) return winner.blobs;
+
+  const fallback = [darkTiles, grayTiles, colorTiles, letterTiles].sort(
     (a, b) => b.length - a.length
-  );
-  const top = filterMainCluster(tileCandidates[0]);
-  if (top.length >= 16 && top.length <= 36) return top;
-  if (grayTiles.length >= 9) return filterMainCluster(grayTiles);
-  if (colorTiles.length >= 9) return filterMainCluster(colorTiles);
-  return filterMainCluster(best.length >= 6 ? best : [...best, ...grayTiles]);
+  )[0];
+  return fallback.length >= 6 ? fallback : [...fallback, ...grayTiles];
 }
 
 function computeBounds(cells: CellRegion[][]): GridDetection["bounds"] {
@@ -567,10 +647,11 @@ export async function detectGridLayout(
   hintSize?: number
 ): Promise<GridDetection> {
   const fullFrame = await loadImageFrame(imageSrc);
-  let blobs = collectBlobs(fullFrame);
+  const theme = estimateFrameTheme(fullFrame.data);
+  let blobs = collectBlobs(fullFrame, theme);
   let frame = cropToPuzzleRegion(fullFrame, blobs);
 
-  blobs = collectBlobs(frame);
+  blobs = collectBlobs(frame, theme);
   const gray = toGrayscale(frame.data);
 
   const candidates: GridCandidate[] = [];
@@ -578,6 +659,23 @@ export async function detectGridLayout(
 
   const tileGrid = buildGridFromTileBlobs(blobs);
   if (tileGrid) candidates.push(tileGrid);
+
+  const estSize =
+    hintSize && hintSize >= 3 && hintSize <= 7
+      ? hintSize
+      : tileCount >= 16 && tileCount <= 36
+        ? Math.round(Math.sqrt(tileCount))
+        : 5;
+
+  const uniformBounds = buildGridFromBlobBounds(blobs, estSize, estSize);
+  if (uniformBounds) {
+    candidates.push({
+      ...uniformBounds,
+      confidence:
+        uniformBounds.confidence + (theme === "dark" ? 0.22 : 0.05),
+      method: uniformBounds.method + (theme === "dark" ? "+dark" : ""),
+    });
+  }
 
   const projection = detectByProjection(gray, frame.width, frame.height, blobs);
   if (projection) candidates.push(refineCellsWithBlobs(projection, blobs));
@@ -631,6 +729,13 @@ export async function detectGridLayout(
 
   let best = pickBest(candidates);
 
+  if (theme === "dark") {
+    const uniform = candidates.find((c) => c.method.includes("uniform-bounds"));
+    if (uniform && uniform.rows >= 4 && uniform.cols >= 4) {
+      best = uniform;
+    }
+  }
+
   if (!best) {
     const size = hintSize ?? 4;
     const cell = Math.min(frame.width, frame.height) / size;
@@ -661,6 +766,7 @@ export async function detectGridLayout(
     bounds: computeBounds(cells),
     confidence: Math.min(1, best.confidence),
     method: best.method,
+    theme,
     frame,
   };
 }
