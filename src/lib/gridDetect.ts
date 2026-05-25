@@ -8,9 +8,11 @@ import {
   findDarkTileBlobs,
   findGrayTileBlobs,
   findLetterBlobs,
+  findLetterBlobsRobust,
   findTilesByEdgeContours,
   findTilesBySaturation,
   gaussianAdaptiveThreshold,
+  inferGridFromLetterBlobs,
   type FrameTheme,
   findPeaks,
   invertBinary,
@@ -852,8 +854,69 @@ export async function detectGridLayout(
   const candidates: GridCandidate[] = [];
   const tileCount = filterTileLikeBlobs(blobs).length;
 
+  // ─── Letter-blob primary detector ───
+  // Color-scheme-agnostic: works on any tile color/border style as long as
+  // letters are readable. When the layout is grid-like, this is the most
+  // reliable source of dimensions and cell positions.
+  const robustLetters = findLetterBlobsRobust(frame.data);
+  let lettersGrid: ReturnType<typeof inferGridFromLetterBlobs> | null = null;
+  let lettersCandidate: GridCandidate | null = null;
+  if (robustLetters.blobs.length >= 9) {
+    lettersGrid = inferGridFromLetterBlobs(
+      robustLetters.blobs,
+      frame.width,
+      frame.height
+    );
+    if (lettersGrid && lettersGrid.rows >= 3 && lettersGrid.cols >= 3) {
+      const sizeOk =
+        lettersGrid.rows === lettersGrid.cols &&
+        lettersGrid.rows >= 3 &&
+        lettersGrid.rows <= 7;
+      const fillBonus = Math.min(0.15, lettersGrid.fillRatio * 0.18);
+      lettersCandidate = finalizeCandidate(
+        {
+          rows: lettersGrid.rows,
+          cols: lettersGrid.cols,
+          cells: lettersGrid.cells,
+          confidence: 0.78 + fillBonus + (sizeOk ? 0.05 : 0),
+          method: "letters",
+        },
+        robustLetters.blobs.length
+      );
+      candidates.push(lettersCandidate);
+    }
+  }
+
   const tileGrid = buildGridFromTileBlobs(blobs);
   if (tileGrid) candidates.push(tileGrid);
+
+  // The letters method is the most reliable dimension signal across color
+  // schemes, but its cell bounds aren't always pixel-tight to the tile (they
+  // come from cluster pitch, not tile blobs). So we only force letters to
+  // win — over the cleaner per-tile bounds — when tile detection found
+  // nothing useful for this image.
+  if (lettersCandidate && lettersGrid) {
+    const tileBlobCount = filterTileLikeBlobs(blobs).length;
+    const sizeOk =
+      lettersGrid.rows === lettersGrid.cols &&
+      lettersGrid.rows >= 3 &&
+      lettersGrid.rows <= 7;
+    const authoritative =
+      sizeOk &&
+      lettersGrid.fillRatio >= 0.85 &&
+      robustLetters.blobs.length >= lettersGrid.rows * lettersGrid.cols * 0.85 &&
+      // Defer to tile-based detection when it produced a matching-size grid;
+      // override only when tile detection failed to find consistent tiles.
+      (!tileGrid ||
+        tileBlobCount < lettersGrid.rows * lettersGrid.cols * 0.5 ||
+        (tileGrid.rows !== lettersGrid.rows ||
+          tileGrid.cols !== lettersGrid.cols));
+    if (authoritative) {
+      // Out-of-band score (>1.0) so post-hoc bonuses on other candidates
+      // can't overtake the authoritative letter-cluster grid.
+      lettersCandidate.confidence = 1.6;
+    }
+  }
 
   const clusteredDims = inferGridDimensions(blobs);
   const projDims = inferDimensionsFromProjection(
@@ -945,14 +1008,21 @@ export async function detectGridLayout(
   }
 
   if (hintSize && hintSize >= 3 && hintSize <= 7) {
+    // The hint is an explicit user choice — treat it as authoritative.
+    // Heavily boost matching candidates and penalize differing-size ones so a
+    // weakly-detected hint-sized grid still wins over a confidently-detected
+    // wrong-sized grid (e.g. 3×3 winning when user picked 5×5 on a small
+    // dark-theme image where projection peaks are noisy).
     for (const c of candidates) {
       if (c.rows === hintSize && c.cols === hintSize) {
-        c.confidence += 0.1;
+        c.confidence += 0.6;
       } else if (
         Math.abs(c.rows - hintSize) <= 1 &&
         Math.abs(c.cols - hintSize) <= 1
       ) {
-        c.confidence += 0.04;
+        c.confidence -= 0.2;
+      } else {
+        c.confidence -= 0.5;
       }
     }
   }

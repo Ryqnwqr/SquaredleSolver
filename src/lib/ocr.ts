@@ -213,7 +213,6 @@ function preprocessCellFromFrame(
     maskCornerHints(ctx, size);
     if (theme === "light") {
       // Match the drawImage rect above (size*0.1, size*0.08, size*0.8, size*0.72).
-      // Use width for the border band since the drawn region is rectangular.
       const innerBand = Math.max(2, Math.floor(size * 0.72 * 0.05));
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(size * 0.1, size * 0.08, size * 0.8, innerBand);
@@ -308,11 +307,10 @@ function preprocessCellFromFrame(
 
   buildVariants(tight);
   // Loose crop helps recover cells where uniform-bounds detection shifted the
-  // rectangle off the actual tile, clipping letter strokes. Add only on light
-  // theme to keep dark behavior unchanged where it already works.
-  if (theme === "light") {
-    buildVariants(loose);
-  }
+  // rectangle off the actual tile, clipping letter strokes. Light theme only —
+  // on dark theme, enlarging the crop tends to grab the squircle tile outline
+  // and confuses both Tesseract and shape analysis.
+  if (theme === "light") buildVariants(loose);
 
   return variants;
 }
@@ -393,8 +391,19 @@ async function recognizeLetter(
       const r = scoreR(shapeMetrics);
       const i = scoreI(shapeMetrics);
       const b = scoreB(shapeMetrics);
-      if (result === "E" && p > 0.52 && p > e + 0.12) result = "P";
-      if (result === "E" && r > 0.55 && e < 0.38 && r > p + 0.08) {
+      // Gate E→P/R shape overrides on Tesseract vote strength. Several
+      // variants agreeing on E (aggregate > ~600) is strong evidence that
+      // shouldn't be overruled by a 0.12 shape-prior delta.
+      const eVoteTotal = voteTotal(votes, "E");
+      const strongOcrE = eVoteTotal > 600;
+      if (!strongOcrE && result === "E" && p > 0.52 && p > e + 0.12) result = "P";
+      if (
+        !strongOcrE &&
+        result === "E" &&
+        r > 0.55 &&
+        e < 0.38 &&
+        r > p + 0.08
+      ) {
         result = "R";
       }
       if (

@@ -278,6 +278,197 @@ export interface Blob {
   area: number;
 }
 
+/**
+ * Color-scheme-agnostic letter detection.
+ *
+ * Letters are the one signal that must be high-contrast against tile
+ * background — otherwise the puzzle is unreadable. By trying multiple
+ * thresholding strategies and both polarities, we get a clean per-letter blob
+ * set for any theme (light/dark/tinted, any tile color or border style).
+ *
+ * Returns the candidate set whose blobs are most consistent in size and most
+ * grid-like in their X/Y centroid distribution — i.e., the variant most
+ * likely to be "one blob per letter" rather than over-segmentation (letter
+ * strokes split) or under-segmentation (multiple letters merged).
+ */
+export function findLetterBlobsRobust(
+  image: ImageData
+): { blobs: Blob[]; polarity: "dark-on-light" | "light-on-dark" } {
+  const { width, height } = image;
+  const gray = toGrayscale(image);
+  // Light CLAHE to boost local contrast on flat-ish dark tiles.
+  const enhanced = claheGrayscale(gray, width, height);
+  const blurred = boxBlur(enhanced, width, height, 1);
+
+  // Candidate binarizations. Multiple block radii cover both tightly-packed
+  // small grids and large-spacing big grids. Both polarities cover dark text
+  // on light tiles and light text on dark tiles.
+  const variants: Array<{ bin: Uint8Array; polarity: "dark-on-light" | "light-on-dark" }> = [];
+  for (const r of [6, 10, 14, 20]) {
+    for (const c of [4, 8]) {
+      const bin = gaussianAdaptiveThreshold(blurred, width, height, r, c);
+      variants.push({ bin, polarity: "dark-on-light" });
+      variants.push({ bin: invertBinary(bin), polarity: "light-on-dark" });
+    }
+  }
+
+  const minDim = Math.min(width, height);
+  const minLetterArea = Math.max(8, minDim * minDim * 0.0003);
+  const maxLetterArea = minDim * minDim * 0.04;
+
+  let best: { blobs: Blob[]; polarity: "dark-on-light" | "light-on-dark"; score: number } | null =
+    null;
+
+  for (const { bin, polarity } of variants) {
+    const raw = findLetterBlobs(bin, width, height);
+    // Filter to plausibly letter-sized
+    const filtered = raw.filter(
+      (b) =>
+        b.area >= minLetterArea &&
+        b.area <= maxLetterArea &&
+        b.w >= 4 &&
+        b.h >= 6
+    );
+    if (filtered.length < 9 || filtered.length > 60) continue;
+    const score = scoreLetterGrid(filtered, width, height);
+    if (!best || score > best.score) {
+      best = { blobs: filtered, polarity, score };
+    }
+  }
+
+  return best ? { blobs: best.blobs, polarity: best.polarity } : { blobs: [], polarity: "dark-on-light" };
+}
+
+/**
+ * Score a candidate letter-blob set by how grid-like it looks. Higher is
+ * better. We reward:
+ *   - blob count near a perfect square (n×n cells)
+ *   - tight size distribution (consistent letter heights)
+ *   - X- and Y-cluster counts that match each other (square grid)
+ *   - cluster counts in the realistic Squaredle range [3, 7]
+ */
+function scoreLetterGrid(blobs: Blob[], width: number, height: number): number {
+  if (blobs.length < 9) return 0;
+  const heights = blobs.map((b) => b.h).sort((a, b) => a - b);
+  const medH = heights[heights.length >> 1];
+  const widths = blobs.map((b) => b.w).sort((a, b) => a - b);
+  const medW = widths[widths.length >> 1];
+  if (!medH || !medW) return 0;
+  // Mean absolute deviation of heights, normalized by median height.
+  const hDev =
+    heights.reduce((s, h) => s + Math.abs(h - medH), 0) /
+    (heights.length * medH);
+  // Use a generous cluster tolerance so anti-aliased letter centroids in the
+  // same row/col don't fragment across clusters.
+  const tol = Math.max(medH, medW) * 0.6;
+  const cy = cluster1D(blobs.map((b) => b.cy), tol);
+  const cx = cluster1D(blobs.map((b) => b.cx), tol);
+
+  const rows = cy.length;
+  const cols = cx.length;
+  if (rows < 3 || cols < 3 || rows > 7 || cols > 7) return 0;
+
+  const n = blobs.length;
+  const expected = rows * cols;
+  const countMatch = 1 - Math.min(1, Math.abs(n - expected) / Math.max(1, expected));
+  const squareBonus = rows === cols ? 0.2 : 0;
+  // Penalize if blobs occupy < ~50% of frame area span (they should span most
+  // of it for a real grid)
+  const xSpread = blobs.reduce((s, b) => Math.max(s, b.cx), 0) -
+    blobs.reduce((s, b) => Math.min(s, b.cx), Infinity);
+  const ySpread = blobs.reduce((s, b) => Math.max(s, b.cy), 0) -
+    blobs.reduce((s, b) => Math.min(s, b.cy), Infinity);
+  const spread = Math.min(1, (xSpread / width + ySpread / height) / 1.4);
+
+  return countMatch * 0.45 + squareBonus + spread * 0.2 + (1 - Math.min(1, hDev * 2)) * 0.25;
+}
+
+/**
+ * From a set of letter blobs, infer grid dimensions and synthesize cell
+ * rectangles. Returns null when the blob layout isn't a clean grid.
+ */
+export function inferGridFromLetterBlobs(
+  blobs: Blob[],
+  frameWidth: number,
+  frameHeight: number
+): {
+  rows: number;
+  cols: number;
+  cells: Array<Array<{ x: number; y: number; w: number; h: number; active: boolean }>>;
+  fillRatio: number;
+} | null {
+  if (blobs.length < 9) return null;
+
+  const heights = blobs.map((b) => b.h).sort((a, b) => a - b);
+  const widths = blobs.map((b) => b.w).sort((a, b) => a - b);
+  const medH = heights[heights.length >> 1];
+  const medW = widths[widths.length >> 1];
+  if (!medH || !medW) return null;
+
+  const tol = Math.max(medH, medW) * 0.6;
+  const cyCenters = cluster1D(blobs.map((b) => b.cy), tol);
+  const cxCenters = cluster1D(blobs.map((b) => b.cx), tol);
+  const rows = cyCenters.length;
+  const cols = cxCenters.length;
+  if (rows < 3 || cols < 3 || rows > 7 || cols > 7) return null;
+
+  // Estimate cell pitch from cluster spacings — fall back to frame-divided
+  // pitch if there's only one row/col cluster pair (shouldn't happen given
+  // the >=3 guard above, but defensive).
+  const sortedCx = [...cxCenters].sort((a, b) => a - b);
+  const sortedCy = [...cyCenters].sort((a, b) => a - b);
+  const colGaps: number[] = [];
+  for (let i = 1; i < sortedCx.length; i++) colGaps.push(sortedCx[i] - sortedCx[i - 1]);
+  const rowGaps: number[] = [];
+  for (let i = 1; i < sortedCy.length; i++) rowGaps.push(sortedCy[i] - sortedCy[i - 1]);
+  const cellW = median(colGaps) || frameWidth / cols;
+  const cellH = median(rowGaps) || frameHeight / rows;
+
+  // Snap each blob to nearest (row, col) cluster index.
+  const indexAt = (val: number, centers: number[]): number => {
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < centers.length; i++) {
+      const d = Math.abs(centers[i] - val);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  };
+  const occ: boolean[][] = Array.from({ length: rows }, () =>
+    Array<boolean>(cols).fill(false)
+  );
+  for (const b of blobs) {
+    const r = indexAt(b.cy, sortedCy);
+    const c = indexAt(b.cx, sortedCx);
+    occ[r][c] = true;
+  }
+
+  // Build cells. Cell rectangle is centered on the cluster center with
+  // generous coverage (cellW × cellH expanded slightly so letter+tile fit).
+  const cellPadW = cellW * 0.95;
+  const cellPadH = cellH * 0.95;
+  const cells = sortedCy.map((cy, r) =>
+    sortedCx.map((cx, c) => ({
+      x: Math.max(0, Math.round(cx - cellPadW / 2)),
+      y: Math.max(0, Math.round(cy - cellPadH / 2)),
+      w: Math.round(
+        Math.min(frameWidth - Math.max(0, Math.round(cx - cellPadW / 2)), cellPadW)
+      ),
+      h: Math.round(
+        Math.min(frameHeight - Math.max(0, Math.round(cy - cellPadH / 2)), cellPadH)
+      ),
+      active: occ[r][c],
+    }))
+  );
+
+  const total = rows * cols;
+  const active = occ.flat().filter(Boolean).length;
+  return { rows, cols, cells, fillRatio: active / total };
+}
+
 export function findLetterBlobs(
   binary: Uint8Array,
   width: number,

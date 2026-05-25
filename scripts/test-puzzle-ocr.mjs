@@ -53,13 +53,50 @@ const FIXTURES = {
       { r: 3, c: 2, letter: "R" },
     ],
   },
+  darkClean: {
+    image: "new-test.png",
+    expected: ["MTDEK", "HOOJI", "OPYLN", "PHRDA", "PSBRR"],
+    critical: [
+      { r: 0, c: 0, letter: "M" },
+      { r: 2, c: 1, letter: "P" },
+      { r: 4, c: 4, letter: "R" },
+    ],
+  },
+  light4x4Min: {
+    image: "light-4x4-minimal.png",
+    hint: 4,
+    expected: ["ETAN", "RLIS", "UOCY", "KDPG"],
+    critical: [
+      { r: 0, c: 0, letter: "E" },
+      { r: 3, c: 3, letter: "G" },
+    ],
+  },
+  light4x4Sh: {
+    image: "light-4x4-shadow.png",
+    hint: 4,
+    expected: ["NCMN", "KAIE", "ECUS", "HERT"],
+    critical: [
+      { r: 0, c: 0, letter: "N" },
+      { r: 3, c: 3, letter: "T" },
+    ],
+  },
+  dark5x5Teal: {
+    image: "dark-5x5-teal.png",
+    expected: ["SUNLE", "ITBON", "TMOOD", "EPWGF", "DEBOL"],
+    critical: [
+      { r: 0, c: 0, letter: "S" },
+      { r: 4, c: 4, letter: "L" },
+    ],
+  },
   dark4x4: {
     image: "puzzle-dark-4x4.png",
+    hint: 4,
     expected: ["THIK", "RJOO", "HRRI", "ARIB"],
     critical: [{ r: 0, c: 0, letter: "T" }],
   },
   dark4x4v2: {
     image: "puzzle-dark-4x4-v2.png",
+    hint: 4,
     expected: ["SANI", "RYRA", "IBAN", "LOOK"],
     critical: [
       { r: 1, c: 0, letter: "R" },
@@ -122,7 +159,7 @@ try {
   const gridHint =
     process.env.GRID_HINT !== undefined
       ? parseInt(process.env.GRID_HINT, 10) || undefined
-      : 5;
+      : fixture.hint ?? 5;
 
   const result = await page.evaluate(
     async ({ src, hint, diag }) => {

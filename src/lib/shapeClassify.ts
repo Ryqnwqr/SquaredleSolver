@@ -550,7 +550,12 @@ export function resolveLetter(
     if (eScore >= bestNonE && eScore > 0) {
       const shapeWinner = pickBestShape(metrics);
       const shapeWinScore = shapePrior(shapeWinner, metrics);
+      // Don't suppress E in favor of P/R when Tesseract aggregated strong
+      // E agreement — shape-prior margins of 0.12 are noisy compared to a
+      // multi-variant OCR consensus.
+      const strongOcrE = eVote > 600;
       if (
+        !strongOcrE &&
         (shapeWinner === "P" || shapeWinner === "R") &&
         shapeWinScore > eShape + 0.12
       ) {
@@ -656,13 +661,25 @@ export function resolveLetter(
     const p = scoreP(metrics);
     const r = scoreR(metrics);
     if (best === "E") {
-      if (p > e + 0.08 && p >= r) return "P";
-      if (r > e + 0.08 && r > p) return "R";
+      // Don't flip a strongly Tesseract-voted E away. A single confident
+      // OCR call typically weighs ~80–200; an aggregate above ~600 means
+      // several variants agreed on E, which is much stronger evidence than
+      // a shape-prior delta of ~0.3.
+      const eVote = scores.get("E") ?? 0;
+      const strongOcrE = eVote > 600;
+      if (!strongOcrE && p > e + 0.08 && p >= r) return "P";
+      if (!strongOcrE && r > e + 0.08 && r > p) return "R";
     }
     if (best === "E" || best === "P" || best === "R") {
+      // Skip the shape override when Tesseract aggregated strong agreement
+      // for the current best letter — multi-variant OCR consensus is much
+      // more reliable than a 0.1-margin shape prior delta.
+      const bestVote = scores.get(best) ?? 0;
+      const strongOcrBest = bestVote > 600;
       const shapeBest = pickBestShape(metrics, ["E", "P", "R"]);
       const sw = shapePrior(shapeBest, metrics);
       if (
+        !strongOcrBest &&
         (shapeBest === "P" || shapeBest === "R") &&
         sw > 0.55 &&
         sw > shapePrior(best, metrics) + 0.1
@@ -673,7 +690,30 @@ export function resolveLetter(
     if (best === "B") {
       const i = scoreI(metrics);
       const b = scoreB(metrics);
+      const p = scoreP(metrics);
+      const r = scoreR(metrics);
+      const o = scoreO(metrics);
       if (i > 0.45 && i > b + 0.12) return "I";
+      // Strong P/R signal beats weak B (e.g. dark theme where P-bowl + low
+      // bottom-right is read as B by Tesseract but shape is clearly P).
+      if (p > 0.6 && p > b + 0.25) return "P";
+      if (r > 0.6 && r > b + 0.25 && hasRLeg(metrics)) return "R";
+      // Symmetric round shape with balanced bottoms is O, not B — Tesseract
+      // sometimes reads dark squircle O's as B because the bowl-stem pattern
+      // resembles B at low resolution. Require no detected middle bar (B has
+      // one, O doesn't) to avoid the inverse mistake.
+      if (
+        o > 0.7 &&
+        !metrics.hasMiddleBar &&
+        metrics.midRowRightRatio > 0.35 &&
+        metrics.symmetry > 0.95 &&
+        metrics.bottomLeftRatio > 0.15 &&
+        metrics.bottomRightRatio > 0.15 &&
+        Math.abs(metrics.bottomLeftRatio - metrics.bottomRightRatio) < 0.08 &&
+        metrics.midRowSpan > 0.85
+      ) {
+        return "O";
+      }
     }
   }
 
