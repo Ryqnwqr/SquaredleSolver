@@ -43,6 +43,11 @@ const FIXTURES = {
       { r: 4, c: 0, letter: "I" },
     ],
   },
+  dark4x4: {
+    image: "puzzle-dark-4x4.png",
+    expected: ["THIK", "RJOO", "HRRI", "ARIB"],
+    critical: [{ r: 0, c: 0, letter: "T" }],
+  },
   dark: {
     image: "puzzle-dark-5x5.png",
     // Row 5 col 5 is "!" which is not a valid Squaredle letter; skip it with null
@@ -88,18 +93,26 @@ try {
     { timeout: 120000 }
   );
 
-  const result = await page.evaluate(async (src) => {
-    const { extractGridFromImage } = await import("/src/lib/ocr.ts");
-    const { normalizeGrid } = await import("/src/lib/solver.ts");
-    const out = await extractGridFromImage(src, 5);
-    return {
-      grid: normalizeGrid(out.grid),
-      method: out.detection.method,
-      theme: out.detection.theme,
-      rows: out.detection.rows,
-      cols: out.detection.cols,
-    };
-  }, dataUrl);
+  const gridHint =
+    process.env.GRID_HINT !== undefined
+      ? parseInt(process.env.GRID_HINT, 10) || undefined
+      : 5;
+
+  const result = await page.evaluate(
+    async ({ src, hint }) => {
+      const { extractGridFromImage } = await import("/src/lib/ocr.ts");
+      const { normalizeGrid } = await import("/src/lib/solver.ts");
+      const out = await extractGridFromImage(src, hint);
+      return {
+        grid: normalizeGrid(out.grid),
+        method: out.detection.method,
+        theme: out.detection.theme,
+        rows: out.detection.rows,
+        cols: out.detection.cols,
+      };
+    },
+    { src: dataUrl, hint: gridHint }
+  );
 
   console.log(
     `\nDetection: ${result.theme} theme, ${result.rows}×${result.cols}, method=${result.method}`

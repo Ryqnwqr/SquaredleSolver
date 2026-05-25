@@ -8,6 +8,7 @@
     "build": "node scripts/build-nwl-list.mjs && tsc -b && vite build",
     "build:nwl": "node scripts/build-nwl-list.mjs",
     "test:ocr": "node scripts/test-puzzle-ocr.mjs",
+    "test:grid": "node scripts/test-grid-detect.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

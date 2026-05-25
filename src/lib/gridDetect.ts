@@ -161,6 +161,67 @@ function finalizeCandidate(candidate: GridCandidate, tileCount: number): GridCan
 // and count the resulting groups. Even a partial set (e.g. 12 of 16 tiles on
 // a 4×4 board) will produce 4 X-clusters and 4 Y-clusters.
 // ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Count row/column bands from CLAHE + edge projection profiles.
+ * Works without tile blobs — essential for low-contrast boards where colour
+ * segmentation finds nothing.
+ */
+function inferDimensionsFromProjection(
+  gray: Float32Array,
+  width: number,
+  height: number
+): { rows: number; cols: number; confidence: number } | null {
+  const enhanced = claheGrayscale(gray, width, height);
+  const edges = sobelMagnitude(enhanced, width, height);
+  const rowVar = varianceProfile(enhanced, width, height, "row");
+  const colVar = varianceProfile(enhanced, width, height, "col");
+  const rowEdge = edgeProfile(edges, width, height, "row");
+  const colEdge = edgeProfile(edges, width, height, "col");
+
+  const rowCombined = new Float32Array(height);
+  const colCombined = new Float32Array(width);
+  for (let y = 0; y < height; y++) {
+    rowCombined[y] = rowVar[y] * 0.65 + rowEdge[y] * 0.35;
+  }
+  for (let x = 0; x < width; x++) {
+    colCombined[x] = colVar[x] * 0.65 + colEdge[x] * 0.35;
+  }
+
+  const peakSpacingScore = (peaks: Peak[]): number => {
+    if (peaks.length < 2) return 0.5;
+    const gaps: number[] = [];
+    for (let i = 1; i < peaks.length; i++) {
+      gaps.push(peaks[i].index - peaks[i - 1].index);
+    }
+    const med = median(gaps);
+    if (med <= 0) return 0;
+    const dev = median(gaps.map((g) => Math.abs(g - med))) / med;
+    return Math.max(0, 1 - dev * 2);
+  };
+
+  let best: { rows: number; cols: number; confidence: number } | null = null;
+
+  // Try common Squaredle sizes; prefer 4 before 5 when scores tie (avoids 5×5 default bias)
+  for (const n of [4, 5, 6, 3, 7]) {
+    const minRowDist = Math.max(6, Math.floor(height / (n + 0.55)));
+    const minColDist = Math.max(6, Math.floor(width / (n + 0.55)));
+    const rowPeaks = findPeaks(rowCombined, minRowDist, 0.15);
+    const colPeaks = findPeaks(colCombined, minColDist, 0.15);
+
+    if (rowPeaks.length !== n || colPeaks.length !== n) continue;
+
+    const rowScore = peakSpacingScore(rowPeaks);
+    const colScore = peakSpacingScore(colPeaks);
+    const conf = 0.35 * rowScore + 0.35 * colScore + 0.3 * (rowPeaks.length === colPeaks.length ? 1 : 0);
+
+    if (!best || conf > best.confidence + 0.02) {
+      best = { rows: n, cols: n, confidence: conf };
+    }
+  }
+
+  return best;
+}
+
 function inferGridDimensions(
   blobs: Blob[]
 ): { rows: number; cols: number } | null {
@@ -247,6 +308,36 @@ function buildGridFromBlobBounds(
       method: "uniform-bounds",
     },
     tiles.length
+  );
+}
+
+/** Even grid split over the full frame when blob detection found no tiles. */
+function buildUniformGridFromFrame(
+  frameW: number,
+  frameH: number,
+  rows: number,
+  cols: number,
+  method: string
+): GridCandidate {
+  const cellW = frameW / cols;
+  const cellH = frameH / rows;
+  const cells: CellRegion[][] = [];
+  for (let r = 0; r < rows; r++) {
+    const row: CellRegion[] = [];
+    for (let c = 0; c < cols; c++) {
+      row.push({
+        x: Math.round(c * cellW),
+        y: Math.round(r * cellH),
+        w: Math.round(cellW),
+        h: Math.round(cellH),
+        active: true,
+      });
+    }
+    cells.push(row);
+  }
+  return finalizeCandidate(
+    { rows, cols, cells, confidence: 0.55, method },
+    rows * cols
   );
 }
 
@@ -510,20 +601,24 @@ function detectByProjection(
   }
 
   const tiles = filterTileLikeBlobs(filterMainCluster(blobs));
-  const estRows =
-    tiles.length >= 9
+  const projDims = inferDimensionsFromProjection(gray, width, height);
+  const blobRows =
+    tiles.length >= 6
       ? cluster1D(
           tiles.map((t) => t.cy),
           median(tiles.map((t) => t.h)) * 0.42
         ).length
-      : Math.round(height / (height / 5));
-  const estCols =
-    tiles.length >= 9
+      : null;
+  const blobCols =
+    tiles.length >= 6
       ? cluster1D(
           tiles.map((t) => t.cx),
           median(tiles.map((t) => t.w)) * 0.42
         ).length
-      : Math.round(width / (width / 5));
+      : null;
+  const estRows = blobRows ?? projDims?.rows ?? 0;
+  const estCols = blobCols ?? projDims?.cols ?? 0;
+  if (estRows < 3 || estCols < 3) return null;
 
   const estCellH = height / Math.max(estRows, 3);
   const estCellW = width / Math.max(estCols, 3);
@@ -624,8 +719,10 @@ function tileBlobScore(blobs: Blob[]): number {
   const n = tiles.length;
   if (n < 9 || n > 49) return -1;
   const squareBonus = n >= 16 && n <= 36 ? 8 : 0;
-  const exact25 = n === 25 ? 6 : 0;
-  return n + squareBonus + exact25;
+  const nearestN = Math.round(Math.sqrt(n));
+  const squareFit =
+    Math.abs(n - nearestN * nearestN) <= 2 ? 5 + (nearestN === 4 ? 2 : 0) : 0;
+  return n + squareBonus + squareFit;
 }
 
 function collectBlobs(frame: ImageFrame, theme: FrameTheme): Blob[] {
@@ -670,13 +767,26 @@ function collectBlobs(frame: ImageFrame, theme: FrameTheme): Blob[] {
   // New: saturation-channel tiles (HSV S fallback for coloured tiles on dark bg)
   const satTiles = filterMainCluster(findTilesBySaturation(frame.data));
 
+  // Edge contours often segment letters, not tiles — only use on dark when they
+  // form a plausible square grid (see below). On light boards always prefer gray/color tiles.
+  let edgeScore = theme === "light" ? -1 : tileBlobScore(edgeTiles) + 1;
+  if (theme === "dark") {
+    const edgeDims = inferGridDimensions(edgeTiles);
+    const edgeN = filterTileLikeBlobs(filterMainCluster(edgeTiles)).length;
+    if (
+      edgeDims &&
+      edgeDims.rows === edgeDims.cols &&
+      edgeN >= 12 &&
+      edgeN <= 25
+    ) {
+      edgeScore = tileBlobScore(edgeTiles) + 10;
+    }
+  }
+
   const ranked = [
-    // On dark boards, edge/letter blobs often catch letter regions (~16 blobs)
-    // rather than tile regions, causing 4×4 mis-detection. Treat them as last
-    // resort there, exactly like letter tiles.
     {
       blobs: edgeTiles,
-      score: theme === "dark" ? -1 : tileBlobScore(edgeTiles) + 1,
+      score: edgeScore,
     },
     { blobs: darkTiles, score: tileBlobScore(darkTiles) + (theme === "dark" ? 12 : 0) },
     { blobs: grayTiles, score: tileBlobScore(grayTiles) + (theme === "light" ? 4 : 0) },
@@ -692,7 +802,12 @@ function collectBlobs(frame: ImageFrame, theme: FrameTheme): Blob[] {
   ].sort((a, b) => b.score - a.score);
 
   const winner = ranked[0];
-  if (winner.score > 0) return winner.blobs;
+  if (winner.score > 0) {
+    if (theme === "light" && tileBlobScore(grayTiles) > 0) {
+      return grayTiles;
+    }
+    return winner.blobs;
+  }
 
   // All scored methods failed — try saturation then edge as last-resort fallbacks
   if (satTiles.length >= 6) return satTiles;
@@ -740,33 +855,74 @@ export async function detectGridLayout(
   const tileGrid = buildGridFromTileBlobs(blobs);
   if (tileGrid) candidates.push(tileGrid);
 
-  // Prefer cluster-based dimension inference over sqrt(tileCount):
-  //   sqrt(12) = 3  but clustering 12 of 16 tiles gives 4×4 ✓
-  //   sqrt(20) = 4  but clustering 20 of 25 tiles gives 5×5 ✓
-  // Fall back to sqrt only when clustering returns nothing useful.
   const clusteredDims = inferGridDimensions(blobs);
-  const estSize =
-    hintSize && hintSize >= 3 && hintSize <= 7
-      ? hintSize
-      : clusteredDims && clusteredDims.rows === clusteredDims.cols
-        ? clusteredDims.rows
-        : tileCount >= 9 && tileCount <= 49
-          ? Math.round(Math.sqrt(tileCount))
-          : 5;
+  const projDims = inferDimensionsFromProjection(
+    gray,
+    frame.width,
+    frame.height
+  );
 
-  const uniformRows = clusteredDims?.rows ?? estSize;
-  const uniformCols = clusteredDims?.cols ?? estSize;
-  const uniformBounds = buildGridFromBlobBounds(blobs, uniformRows, uniformCols);
-  if (uniformBounds) {
-    // Penalise uniform grids where very few cells have supporting blobs —
-    // this catches hallucinated rows/columns on partial boards (e.g. a 5×5
-    // grid built over a 4×4 board would have ~20% of cells unsupported).
-    const coverage = gridCoverage(uniformBounds, blobs);
-    const sparsePenalty = coverage < 0.3 ? -0.25 : 0;
+  const sizesToTry = new Set<number>();
+  if (hintSize && hintSize >= 3 && hintSize <= 7) sizesToTry.add(hintSize);
+  if (projDims && projDims.confidence > 0.35) sizesToTry.add(projDims.rows);
+  if (clusteredDims && clusteredDims.rows === clusteredDims.cols) {
+    sizesToTry.add(clusteredDims.rows);
+  }
+  if (tileCount >= 9 && tileCount <= 49) {
+    sizesToTry.add(Math.round(Math.sqrt(tileCount)));
+  }
+  for (const s of [4, 5, 6]) sizesToTry.add(s);
+  if (hintSize && hintSize >= 3 && hintSize <= 7) sizesToTry.add(hintSize);
+
+  for (const size of sizesToTry) {
+    const uniformBounds = buildGridFromBlobBounds(blobs, size, size);
+    const uniformFrame = buildUniformGridFromFrame(
+      frame.width,
+      frame.height,
+      size,
+      size,
+      "uniform-frame"
+    );
+    const base = uniformBounds ?? uniformFrame;
+    const coverage = gridCoverage(base, blobs);
+    const sparsePenalty = coverage < 0.25 && blobs.length >= 6 ? -0.2 : 0;
+    const projBonus =
+      projDims &&
+      projDims.rows === size &&
+      projDims.cols === size &&
+      projDims.confidence > 0.35
+        ? projDims.confidence * 0.35
+        : 0;
+    const clusterBonus =
+      clusteredDims &&
+      clusteredDims.rows === size &&
+      clusteredDims.cols === size
+        ? 0.12
+        : 0;
+    const tileMatchBonus =
+      size * size >= tileCount - 3 && size * size <= tileCount + 3
+        ? 0.1
+        : 0;
+    const wrongSizePenalty =
+      projDims &&
+      projDims.confidence > 0.4 &&
+      projDims.rows !== size
+        ? -0.25
+        : 0;
+
     candidates.push({
-      ...uniformBounds,
-      confidence: uniformBounds.confidence + (theme === "dark" ? 0.22 : 0.05) + sparsePenalty,
-      method: uniformBounds.method + (theme === "dark" ? "+dark" : ""),
+      ...base,
+      confidence:
+        base.confidence +
+        coverage * 0.25 +
+        projBonus +
+        clusterBonus +
+        tileMatchBonus +
+        sparsePenalty +
+        wrongSizePenalty +
+        (theme === "dark" && uniformBounds ? 0.08 : 0),
+      method: (uniformBounds ? base.method : "uniform-frame") +
+        (theme === "dark" ? "+dark" : ""),
     });
   }
 
@@ -776,90 +932,68 @@ export async function detectGridLayout(
   const blobGrid = buildCellsFromBlobs(blobs);
   if (blobGrid) candidates.push(refineCellsWithBlobs(blobGrid, blobs));
 
-  if (tileCount >= 16 && tileCount <= 36) {
+  if (tileCount >= 9 && tileCount <= 49) {
     for (const c of candidates) {
       const active = c.cells.flat().filter((cell) => cell.active).length;
       if (c.rows === c.cols && Math.abs(active - tileCount) <= 3) {
         c.confidence += 0.12;
       }
-      if (
-        (c.rows === 6 && c.cols === 5) ||
-        (c.rows === 5 && c.cols === 6) ||
-        c.rows !== c.cols && tileCount === 25
-      ) {
-        c.confidence -= 0.2;
+      if (c.rows !== c.cols) {
+        c.confidence -= 0.15;
       }
     }
   }
 
   if (hintSize && hintSize >= 3 && hintSize <= 7) {
     for (const c of candidates) {
-      if (
-        c.rows === hintSize &&
-        c.cols === hintSize
-      ) {
+      if (c.rows === hintSize && c.cols === hintSize) {
         c.confidence += 0.1;
-      } else if (Math.abs(c.rows - hintSize) <= 1 && Math.abs(c.cols - hintSize) <= 1) {
+      } else if (
+        Math.abs(c.rows - hintSize) <= 1 &&
+        Math.abs(c.cols - hintSize) <= 1
+      ) {
         c.confidence += 0.04;
       }
     }
   }
 
-  for (const c of candidates) {
-    if (c.rows === 5 && c.cols === 5) {
-      const corners = [
-        c.cells[0]?.[0],
-        c.cells[0]?.[4],
-        c.cells[4]?.[0],
-        c.cells[4]?.[4],
-      ];
-      const missingCorners = corners.filter((cell) => cell && !cell.active).length;
-      if (missingCorners >= 2 && missingCorners <= 4) {
-        c.confidence += 0.06;
+  const tileCandidate = candidates.find((c) => c.method.startsWith("tiles"));
+  if (tileCandidate && tileCandidate.rows === tileCandidate.cols) {
+    const n = tileCandidate.rows;
+    const filled =
+      tileCandidate.cells.flat().filter((c) => c.active).length / (n * n);
+    const cellW = median(
+      tileCandidate.cells.flat().map((c) => c.w).filter((w) => w > 0)
+    );
+    const minTileW = frame.width / (n + 1.2);
+    const cellsAreTileSized = cellW >= minTileW * 0.5;
+    if (filled >= 0.72 && cellsAreTileSized) {
+      tileCandidate.confidence += 0.45;
+      for (const c of candidates) {
+        if (c.method.startsWith("tiles")) continue;
+        if (c.rows !== n || c.cols !== n) c.confidence -= 0.35;
       }
     }
   }
 
   let best = pickBest(candidates);
 
-  if (theme === "dark") {
-    // On dark boards the uniform-bounds grid is usually the only reliable
-    // candidate. Prefer it only when coverage is decent (blobs found) or when
-    // pickBest found nothing — avoids hallucinating rows on sparse boards.
-    const uniform = candidates.find((c) => c.method.includes("uniform-bounds"));
-    if (uniform && uniform.rows >= 3 && uniform.cols >= 3) {
-      const cov = gridCoverage(uniform, blobs);
-      // Trust uniform when it has coverage support OR nothing else was found
-      if (cov > 0.3 || !best) {
-        best = uniform;
-      }
-    }
-  }
-
   if (!best) {
-    // Use cluster inference → estSize → 5 (most common Squaredle grid)
-    const fallbackSquare =
-      clusteredDims && clusteredDims.rows === clusteredDims.cols
+    const size =
+      hintSize ??
+      (projDims && projDims.confidence > 0.3 ? projDims.rows : null) ??
+      (clusteredDims && clusteredDims.rows === clusteredDims.cols
         ? clusteredDims.rows
-        : null;
-    const size = hintSize ?? fallbackSquare ?? estSize;
-    const cell = Math.min(frame.width, frame.height) / size;
-    const cells: CellRegion[][] = Array.from({ length: size }, (_, r) =>
-      Array.from({ length: size }, (_, c) => ({
-        x: Math.round(c * cell),
-        y: Math.round(r * cell),
-        w: Math.round(cell),
-        h: Math.round(cell),
-        active: true,
-      }))
+        : null) ??
+      5;
+    best = buildUniformGridFromFrame(
+      frame.width,
+      frame.height,
+      size,
+      size,
+      "fallback-uniform"
     );
-    best = {
-      rows: size,
-      cols: size,
-      cells,
-      confidence: 0.2,
-      method: "fallback-uniform",
-    };
+    best = { ...best, confidence: 0.2 };
   }
 
   const cells = ensurePlayableCells(best.cells, best.rows, best.cols);
