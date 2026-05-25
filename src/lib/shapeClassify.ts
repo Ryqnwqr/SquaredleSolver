@@ -92,6 +92,90 @@ export function analyzeShape(canvas: HTMLCanvasElement): ShapeMetrics | null {
 
   if (ink < 20 || maxX <= minX || maxY <= minY) return null;
 
+  // ── Bbox refinement: trim noise pockets disconnected from the main letter
+  // mass. Cells from uniform-bounds detection can include slivers of adjacent
+  // tile borders or shadows that wildly extend the bbox (e.g. a thin "I"
+  // ending up with aspect=0.9 because of right-side noise). We walk outward
+  // from the densest column/row and stop when we hit a wide gap, treating
+  // anything beyond as unrelated noise.
+  {
+    let densestCol = minX;
+    let densestColCount = 0;
+    for (let x = minX; x <= maxX; x++) {
+      if (colCounts[x] > densestColCount) {
+        densestColCount = colCounts[x];
+        densestCol = x;
+      }
+    }
+    let densestRow = minY;
+    let densestRowCount = 0;
+    for (let y = minY; y <= maxY; y++) {
+      if (rowCounts[y] > densestRowCount) {
+        densestRowCount = rowCounts[y];
+        densestRow = y;
+      }
+    }
+    const colThresh = Math.max(2, densestColCount * 0.05);
+    const rowThresh = Math.max(2, densestRowCount * 0.05);
+    const maxGap = Math.max(3, Math.floor((maxX - minX + 1) * 0.12));
+
+    let nMaxX = densestCol;
+    let gap = 0;
+    for (let x = densestCol + 1; x <= maxX; x++) {
+      if (colCounts[x] >= colThresh) {
+        nMaxX = x;
+        gap = 0;
+      } else if (++gap > maxGap) break;
+    }
+    let nMinX = densestCol;
+    gap = 0;
+    for (let x = densestCol - 1; x >= minX; x--) {
+      if (colCounts[x] >= colThresh) {
+        nMinX = x;
+        gap = 0;
+      } else if (++gap > maxGap) break;
+    }
+    let nMaxY = densestRow;
+    gap = 0;
+    const maxRowGap = Math.max(3, Math.floor((maxY - minY + 1) * 0.12));
+    for (let y = densestRow + 1; y <= maxY; y++) {
+      if (rowCounts[y] >= rowThresh) {
+        nMaxY = y;
+        gap = 0;
+      } else if (++gap > maxRowGap) break;
+    }
+    let nMinY = densestRow;
+    gap = 0;
+    for (let y = densestRow - 1; y >= minY; y--) {
+      if (rowCounts[y] >= rowThresh) {
+        nMinY = y;
+        gap = 0;
+      } else if (++gap > maxRowGap) break;
+    }
+    // Only apply refinement if it actually shrinks the bbox meaningfully and
+    // still leaves a substantial letter; otherwise leave original bbox alone.
+    if (
+      nMaxX - nMinX + 1 >= 6 &&
+      nMaxY - nMinY + 1 >= 6 &&
+      (nMaxX - nMinX < (maxX - minX) * 0.9 ||
+        nMaxY - nMinY < (maxY - minY) * 0.9)
+    ) {
+      minX = nMinX;
+      maxX = nMaxX;
+      minY = nMinY;
+      maxY = nMaxY;
+      // Recount ink inside the refined bbox so leftInk/rightInk/etc. below
+      // reflect the trimmed region.
+      ink = 0;
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          if (isInkPixel(data, width, x, y, inkThreshold, darkBg)) ink++;
+        }
+      }
+      if (ink < 20) return null;
+    }
+  }
+
   const w = maxX - minX + 1;
   const h = maxY - minY + 1;
   const midX = (minX + maxX) / 2;
@@ -204,6 +288,17 @@ export function analyzeShape(canvas: HTMLCanvasElement): ShapeMetrics | null {
 export function hasRLeg(m: ShapeMetrics): boolean {
   const blr = m.bottomLeftRatio;
   const brr = m.bottomRightRatio;
+  // Highly symmetric letters with balanced bottom-corner ink are almost
+  // always O/D, not R — even if mid-row appears column-heavy (which can
+  // happen on a clipped O where the right loop is faded below threshold).
+  if (
+    m.symmetry > 0.93 &&
+    blr > 0.18 &&
+    brr > 0.18 &&
+    Math.abs(brr - blr) < 0.08
+  ) {
+    return false;
+  }
   if (brr > 0.095 && brr > blr * 1.22) return true;
   if (
     m.leftHalfRatio > 0.4 &&
@@ -521,6 +616,26 @@ export function resolveLetter(
   }
 
   if (metrics) {
+    // Light theme: weak Tesseract R evidence (single low-conf vote) plus a
+    // strongly O-like shape → letter is O whose right loop got clipped by an
+    // off-by-a-few-pixels cell rectangle. Without this, otherwise-correct O's
+    // get reported as R because shapePrior(R) reads the gap as a missing
+    // mid-row stroke.
+    if (theme === "light" && best === "R") {
+      const rVote = scores.get("R") ?? 0;
+      const oShape = scoreO(metrics);
+      const eShape = scoreE(metrics);
+      if (
+        rVote < 130 &&
+        oShape > 0.55 &&
+        metrics.symmetry > 0.9 &&
+        metrics.bottomLeftRatio > 0.18 &&
+        metrics.bottomRightRatio > 0.18 &&
+        oShape > eShape
+      ) {
+        return "O";
+      }
+    }
     if (theme === "dark" && best === "R") {
       // If Tesseract was confident about R, trust it
       const rRawScore = scores.get("R") ?? 0;

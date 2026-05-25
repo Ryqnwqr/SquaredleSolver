@@ -58,6 +58,30 @@ function maskCornerHints(
   ctx.fillRect(size - w, 0, w, Math.floor(size * 0.12));
 }
 
+/**
+ * Whiten a thin frame inside the drawn cell region so the tile's own rounded
+ * outline doesn't become "ink" after thresholding. Without this the bbox in
+ * analyzeShape spans the tile border rectangle, which severely distorts the
+ * left/right ink ratios for centered round letters (notably O on light
+ * theme).
+ *
+ * `m` and `d` mirror the drawImage call: `m` is the inset of the drawn region
+ * from each canvas edge, `d` is the drawn region's size.
+ */
+function maskInnerBorder(
+  ctx: CanvasRenderingContext2D,
+  m: number,
+  d: number,
+  color = "#ffffff"
+): void {
+  const band = Math.max(2, Math.floor(d * 0.05));
+  ctx.fillStyle = color;
+  ctx.fillRect(m, m, d, band);
+  ctx.fillRect(m, m + d - band, d, band);
+  ctx.fillRect(m, m, band, d);
+  ctx.fillRect(m + d - band, m, band, d);
+}
+
 function otsuThreshold(gray: Uint8ClampedArray): number {
   const hist = new Array<number>(256).fill(0);
   for (let i = 0; i < gray.length; i++) hist[gray[i]]++;
@@ -95,19 +119,64 @@ function preprocessCellFromFrame(
   frameH: number,
   theme: FrameTheme = "light"
 ): string[] {
-  // Exclude Squaredle corner hint numbers (red/grey counts in bottom corners)
-  const inset = theme === "dark" ? 0.2 : 0.14;
-  const padX = Math.floor(cell.w * inset);
-  const padY = Math.floor(cell.h * (theme === "dark" ? 0.16 : 0.12));
-  const padBottom = Math.floor(cell.h * (theme === "dark" ? 0.18 : 0.22));
-  const sx = Math.max(0, cell.x + padX);
-  const sy = Math.max(0, cell.y + padY);
-  const sw = Math.max(1, Math.min(frameW - sx, cell.w - padX * 2));
-  const sh = Math.max(1, Math.min(frameH - sy, cell.h - padY - padBottom));
+  // Two source crops: a tight one (avoids Squaredle hint numbers in the
+  // bottom corners) and a loose one (recovers when uniform-bounds detection
+  // misaligned the cell — e.g. clean images without hint counts where the
+  // tile is shifted relative to the cell rectangle).
+  const buildCrop = (
+    insetX: number,
+    insetTop: number,
+    insetBottom: number,
+    overscan = 0
+  ) => {
+    const padX = Math.floor(cell.w * insetX);
+    const padY = Math.floor(cell.h * insetTop);
+    const padBottom = Math.floor(cell.h * insetBottom);
+    const overX = Math.floor(cell.w * overscan);
+    const overY = Math.floor(cell.h * overscan);
+    const sx = Math.max(0, cell.x + padX - overX);
+    const sy = Math.max(0, cell.y + padY - overY);
+    const sw = Math.max(
+      1,
+      Math.min(frameW - sx, cell.w - padX * 2 + overX * 2)
+    );
+    const sh = Math.max(
+      1,
+      Math.min(
+        frameH - sy,
+        cell.h - padY - padBottom + overY * 2
+      )
+    );
+    return { sx, sy, sw, sh };
+  };
+
+  const tight =
+    theme === "dark"
+      ? buildCrop(0.2, 0.16, 0.18)
+      : buildCrop(0.14, 0.12, 0.22);
+  // Loose crop: minimal padding and a small overscan beyond the cell box, to
+  // recover when the detected cell rectangle is slightly shifted relative to
+  // the actual tile (uniform-bounds detection on clean light images).
+  const loose =
+    theme === "dark"
+      ? buildCrop(0.1, 0.08, 0.08, 0.04)
+      : buildCrop(0.05, 0.05, 0.06, 0.05);
 
   const variants: string[] = [];
   const sizes = [160, 128, 96];
 
+  // Helper closure invoked twice with different source rectangles.
+  const buildVariants = ({
+    sx,
+    sy,
+    sw,
+    sh,
+  }: {
+    sx: number;
+    sy: number;
+    sw: number;
+    sh: number;
+  }) => {
   for (const size of sizes) {
     const canvas = document.createElement("canvas");
     canvas.width = size;
@@ -124,6 +193,7 @@ function preprocessCellFromFrame(
       ctx.fillRect(0, 0, size, size);
       ctx.drawImage(frameCanvas, sx, sy, sw, sh, m, m, d, d);
       maskCornerHints(ctx, size);
+      if (theme === "light") maskInnerBorder(ctx, m, d);
       variants.push(canvas.toDataURL("image/png"));
     }
 
@@ -141,6 +211,26 @@ function preprocessCellFromFrame(
       size * 0.72
     );
     maskCornerHints(ctx, size);
+    if (theme === "light") {
+      // Match the drawImage rect above (size*0.1, size*0.08, size*0.8, size*0.72).
+      // Use width for the border band since the drawn region is rectangular.
+      const innerBand = Math.max(2, Math.floor(size * 0.72 * 0.05));
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(size * 0.1, size * 0.08, size * 0.8, innerBand);
+      ctx.fillRect(
+        size * 0.1,
+        size * 0.08 + size * 0.72 - innerBand,
+        size * 0.8,
+        innerBand
+      );
+      ctx.fillRect(size * 0.1, size * 0.08, innerBand, size * 0.72);
+      ctx.fillRect(
+        size * 0.1 + size * 0.8 - innerBand,
+        size * 0.08,
+        innerBand,
+        size * 0.72
+      );
+    }
 
     const imageData = ctx.getImageData(0, 0, size, size);
     const gray = new Uint8ClampedArray(size * size);
@@ -213,6 +303,15 @@ function preprocessCellFromFrame(
       maskCornerHints(ctx, size, "#000000");
       variants.push(canvas.toDataURL("image/png"));
     }
+  }
+  };
+
+  buildVariants(tight);
+  // Loose crop helps recover cells where uniform-bounds detection shifted the
+  // rectangle off the actual tile, clipping letter strokes. Add only on light
+  // theme to keep dark behavior unchanged where it already works.
+  if (theme === "light") {
+    buildVariants(loose);
   }
 
   return variants;

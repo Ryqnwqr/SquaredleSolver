@@ -43,6 +43,16 @@ const FIXTURES = {
       { r: 4, c: 0, letter: "I" },
     ],
   },
+  lightClean: {
+    image: "puzzle-5x5-clean.png",
+    expected: ["MTDEK", "HOOJI", "OEYLN", "PHRDA", "ISBOR"],
+    critical: [
+      { r: 2, c: 1, letter: "E" },
+      { r: 4, c: 0, letter: "I" },
+      { r: 3, c: 0, letter: "P" },
+      { r: 3, c: 2, letter: "R" },
+    ],
+  },
   dark4x4: {
     image: "puzzle-dark-4x4.png",
     expected: ["THIK", "RJOO", "HRRI", "ARIB"],
