@@ -11,6 +11,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const FIXTURES = {
   dark4x4: { image: "puzzle-dark-4x4.png", rows: 4, cols: 4 },
+  dark4x4v2: { image: "puzzle-dark-4x4-v2.png", rows: 4, cols: 4 },
   dark: { image: "puzzle-dark-5x5.png", rows: 5, cols: 5 },
   dark2: { image: "puzzle-dark2-5x5.png", rows: 5, cols: 5 },
   dark3: { image: "puzzle-dark3-5x5.png", rows: 5, cols: 5 },

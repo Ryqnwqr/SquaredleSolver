@@ -165,12 +165,20 @@ export function analyzeShape(canvas: HTMLCanvasElement): ShapeMetrics | null {
     botRow.left > 3;
 
   const aspect = h / w;
+  const blrRatio = bottomLeftInk / (bottomRightInk + 0.001);
+  // O/squircle: symmetric bottom corners; R has a diagonal leg → asymmetric bottom
+  const bottomSymmetric =
+    bottomLeftInk / ink > 0.05 &&
+    bottomRightInk / ink > 0.05 &&
+    blrRatio > 0.52 &&
+    blrRatio < 0.78;
   const isRound =
     aspect > 0.72 &&
     aspect < 1.45 &&
     symmetry > 0.68 &&
     !hasMiddleBar &&
-    midRow.rowSpan < 0.38;
+    midRow.rowSpan < 0.38 &&
+    bottomSymmetric;
 
   return {
     w,
@@ -192,7 +200,37 @@ export function analyzeShape(canvas: HTMLCanvasElement): ShapeMetrics | null {
   };
 }
 
+/** R has a leg or stem+bowl; squircle O does not. */
+export function hasRLeg(m: ShapeMetrics): boolean {
+  const blr = m.bottomLeftRatio;
+  const brr = m.bottomRightRatio;
+  if (brr > 0.095 && brr > blr * 1.22) return true;
+  if (
+    m.leftHalfRatio > 0.4 &&
+    m.topRightRatio > 0.09 &&
+    m.midRowRightRatio < 0.22 &&
+    brr > 0.07
+  ) {
+    return true;
+  }
+  if (
+    m.leftHalfRatio > 0.38 &&
+    m.midRowSpan < 0.42 &&
+    !m.hasMiddleBar &&
+    brr > blr + 0.035 &&
+    brr > 0.08
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function scoreO(m: ShapeMetrics): number {
+  if (hasRLeg(m)) {
+    let s = 0;
+    if (m.symmetry > 0.88) s += 0.12;
+    return Math.min(0.32, s);
+  }
   let s = 0;
   if (m.isRound) s += 0.45;
   if (m.symmetry > 0.72) s += 0.25;
@@ -240,15 +278,18 @@ export function scoreP(m: ShapeMetrics): number {
 }
 
 export function scoreR(m: ShapeMetrics): number {
-  if (m.bottomRightRatio < 0.1) return 0.1;
-  // If bottom is symmetric (O) and no middle bar, not R
   const blr = m.bottomLeftRatio;
   const brr = m.bottomRightRatio;
   const bottomSymmetric = blr > 0.06 && brr > 0.06 && blr / (brr + 0.001) > 0.55;
-  if (bottomSymmetric && !m.hasMiddleBar && m.symmetry > 0.9) return 0.15;
+  if (bottomSymmetric && !m.hasMiddleBar && m.symmetry > 0.9 && !hasRLeg(m)) {
+    return 0.15;
+  }
+  if (brr < 0.08 && !hasRLeg(m)) return 0.1;
   let s = 0;
+  if (hasRLeg(m)) s += 0.35;
   if (m.leftHalfRatio > 0.32 && m.topRightRatio > 0.08) s += 0.25;
   if (brr > 0.08) s += 0.4;
+  if (m.midRowRightRatio < 0.24 && m.leftHalfRatio > 0.36) s += 0.2;
   if (m.midRowSpan < 0.4) s += 0.15;
   if (!m.hasMiddleBar || m.midRowSpan < 0.35) s += 0.1;
   if (m.botBand > 0.15 && brr > 0.08) s += 0.15;
@@ -315,6 +356,33 @@ function pickBestShape(m: ShapeMetrics, candidates?: string[]): string {
   return ranked[0]?.letter ?? "";
 }
 
+/** On dark boards OCR often returns O for R (squircle font) — use leg/stem shape. */
+export function resolveDarkAmbiguousO(
+  ocrLetter: string,
+  metrics: ShapeMetrics
+): string {
+  if (ocrLetter !== "O") return ocrLetter;
+  if (!hasRLeg(metrics)) return "O";
+  const r = scoreR(metrics);
+  const o = scoreO(metrics);
+  if (r >= o - 0.06 || r > 0.42) return "R";
+  return "O";
+}
+
+/** Tesseract R votes above this are trusted; shape-only guesses are ~65. */
+export const TESSERACT_CONFIDENT_VOTE = 150;
+
+export function voteTotal(
+  votes: Array<{ letter: string; weight: number }>,
+  letter: string
+): number {
+  let sum = 0;
+  for (const v of votes) {
+    if (v.letter === letter) sum += v.weight;
+  }
+  return sum;
+}
+
 /** On dark boards OCR often returns R for O/E — pick by shape when ambiguous. */
 export function resolveDarkAmbiguousR(
   ocrLetter: string,
@@ -330,7 +398,17 @@ export function resolveDarkAmbiguousR(
     .map((letter) => ({ letter, score: shapePrior(letter, metrics) }))
     .sort((a, b) => b.score - a.score);
 
-  if (ranked[0].letter !== "R") return ranked[0].letter;
+  if (ranked[0].letter !== "R") {
+    // Squircle R: weak leg, low mid-row right fill; true O is rounder (higher midRR).
+    if (
+      ranked[0].letter === "O" &&
+      metrics.midRowRightRatio < 0.4 &&
+      br > 0.17
+    ) {
+      return "R";
+    }
+    return ranked[0].letter;
+  }
   if (metrics.isRound || br < 0.11) return "O";
   if (metrics.hasMiddleBar || metrics.midRowSpan > 0.4) return "E";
   return "R";
@@ -452,6 +530,11 @@ export function resolveLetter(
         return "R";
       }
       return pickBestShape(metrics, ["O", "E"]);
+    }
+    if (theme === "dark" && best === "O") {
+      if (hasRLeg(metrics) && scoreR(metrics) > scoreO(metrics) - 0.05) {
+        return "R";
+      }
     }
 
     const e = scoreE(metrics);

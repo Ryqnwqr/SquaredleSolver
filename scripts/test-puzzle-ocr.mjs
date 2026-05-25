@@ -48,6 +48,17 @@ const FIXTURES = {
     expected: ["THIK", "RJOO", "HRRI", "ARIB"],
     critical: [{ r: 0, c: 0, letter: "T" }],
   },
+  dark4x4v2: {
+    image: "puzzle-dark-4x4-v2.png",
+    expected: ["SANI", "RYRA", "IBAN", "LOOK"],
+    critical: [
+      { r: 1, c: 0, letter: "R" },
+      { r: 1, c: 2, letter: "R" },
+      { r: 3, c: 1, letter: "O" },
+      { r: 3, c: 2, letter: "O" },
+      { r: 3, c: 3, letter: "K" },
+    ],
+  },
   dark: {
     image: "puzzle-dark-5x5.png",
     // Row 5 col 5 is "!" which is not a valid Squaredle letter; skip it with null
@@ -84,6 +95,11 @@ const dataUrl = toDataUrl(IMAGE);
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
+if (process.env.OCR_DIAG) {
+  page.on("console", (msg) => {
+    if (msg.text().startsWith("{")) console.log("DIAG", msg.text());
+  });
+}
 
 try {
   await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 60000 });
@@ -99,7 +115,8 @@ try {
       : 5;
 
   const result = await page.evaluate(
-    async ({ src, hint }) => {
+    async ({ src, hint, diag }) => {
+      if (diag) (globalThis).__OCR_DIAG__ = true;
       const { extractGridFromImage } = await import("/src/lib/ocr.ts");
       const { normalizeGrid } = await import("/src/lib/solver.ts");
       const out = await extractGridFromImage(src, hint);
@@ -111,7 +128,7 @@ try {
         cols: out.detection.cols,
       };
     },
-    { src: dataUrl, hint: gridHint }
+    { src: dataUrl, hint: gridHint, diag: !!process.env.OCR_DIAG }
   );
 
   console.log(

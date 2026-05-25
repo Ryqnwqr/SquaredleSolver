@@ -10,9 +10,12 @@ import {
   scoreB,
   scoreE,
   scoreI,
+  resolveDarkAmbiguousO,
   resolveDarkAmbiguousR,
   scoreP,
   scoreR,
+  TESSERACT_CONFIDENT_VOTE,
+  voteTotal,
   type ShapeMetrics,
 } from "./shapeClassify";
 
@@ -305,7 +308,13 @@ async function recognizeLetter(
       ) {
         result = "I";
       }
-      if (theme === "dark" && result === "R") {
+      if (theme === "dark" && result === "O") {
+        result = resolveDarkAmbiguousO(result, shapeMetrics);
+      } else if (
+        theme === "dark" &&
+        result === "R" &&
+        voteTotal(votes, "R") <= TESSERACT_CONFIDENT_VOTE
+      ) {
         result = resolveDarkAmbiguousR(result, shapeMetrics);
       }
     }
@@ -381,7 +390,11 @@ export async function extractGridFromImage(
       frame.height,
       detection.theme
     );
-    const letter = await recognizeLetter(worker, variants, detection.theme);
+    const letter = await recognizeLetter(
+      worker,
+      variants,
+      detection.theme
+    );
     grid[r][c] = letter || "?";
   }
 
