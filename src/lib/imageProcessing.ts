@@ -541,6 +541,391 @@ export function findGrayTileBlobs(image: ImageData): Blob[] {
   return extractSquareBlobs(mask, width, height, minArea, maxArea, 14);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CLAHE – Contrast Limited Adaptive Histogram Equalization
+// Boosts local contrast so low-contrast tiles become detectable regardless of
+// their absolute luminance or colour.
+// ─────────────────────────────────────────────────────────────────────────────
+export function claheGrayscale(
+  gray: Float32Array,
+  width: number,
+  height: number,
+  tileSize = 64,
+  clipLimit = 3.5
+): Float32Array {
+  const tilesX = Math.max(2, Math.ceil(width / tileSize));
+  const tilesY = Math.max(2, Math.ceil(height / tileSize));
+  const tw = Math.ceil(width / tilesX);
+  const th = Math.ceil(height / tilesY);
+
+  // Build a histogram-equalised LUT for every tile
+  const luts: Uint8Array[] = [];
+  for (let ty = 0; ty < tilesY; ty++) {
+    for (let tx = 0; tx < tilesX; tx++) {
+      const x0 = tx * tw;
+      const y0 = ty * th;
+      const x1 = Math.min(x0 + tw, width);
+      const y1 = Math.min(y0 + th, height);
+      const hist = new Int32Array(256);
+      let count = 0;
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          hist[Math.min(255, Math.floor(gray[y * width + x]))]++;
+          count++;
+        }
+      }
+      // Clip and redistribute excess
+      const clip = Math.max(1, Math.round((clipLimit * count) / 256));
+      let excess = 0;
+      for (let i = 0; i < 256; i++) {
+        if (hist[i] > clip) {
+          excess += hist[i] - clip;
+          hist[i] = clip;
+        }
+      }
+      const add = Math.floor(excess / 256);
+      const rem = excess % 256;
+      for (let i = 0; i < 256; i++) hist[i] += add + (i < rem ? 1 : 0);
+      // Build CDF → output mapping
+      const lut = new Uint8Array(256);
+      let cdf = 0;
+      let cdfMin = -1;
+      for (let i = 0; i < 256; i++) {
+        cdf += hist[i];
+        if (cdfMin < 0 && hist[i] > 0) cdfMin = cdf;
+        lut[i] =
+          cdfMin >= 0 && count > cdfMin
+            ? Math.round(((cdf - cdfMin) / (count - cdfMin)) * 255)
+            : 0;
+      }
+      luts.push(lut);
+    }
+  }
+
+  // Bilinear interpolation between the four surrounding tile LUTs
+  const out = new Float32Array(gray.length);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const v = Math.min(255, Math.floor(gray[y * width + x]));
+      const fx = (x + 0.5) / tw - 0.5;
+      const fy = (y + 0.5) / th - 0.5;
+      const tx0 = Math.max(0, Math.floor(fx));
+      const tx1 = Math.min(tilesX - 1, tx0 + 1);
+      const ty0 = Math.max(0, Math.floor(fy));
+      const ty1 = Math.min(tilesY - 1, ty0 + 1);
+      const wx = Math.max(0, Math.min(1, fx - tx0));
+      const wy = Math.max(0, Math.min(1, fy - ty0));
+      const l00 = luts[ty0 * tilesX + tx0][v];
+      const l10 = luts[ty0 * tilesX + tx1][v];
+      const l01 = luts[ty1 * tilesX + tx0][v];
+      const l11 = luts[ty1 * tilesX + tx1][v];
+      out[y * width + x] =
+        l00 * (1 - wx) * (1 - wy) +
+        l10 * wx * (1 - wy) +
+        l01 * (1 - wx) * wy +
+        l11 * wx * wy;
+    }
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Canny edge detection
+// Finds tile boundaries by gradient alone – works for any colour/contrast.
+// ─────────────────────────────────────────────────────────────────────────────
+export function cannyEdges(
+  gray: Float32Array,
+  width: number,
+  height: number
+): Uint8Array {
+  // Approximate Gaussian smoothing via 3 box-blur passes (≈ σ 1.7)
+  let blurred = boxBlur(gray, width, height, 1);
+  blurred = boxBlur(blurred, width, height, 1);
+  blurred = boxBlur(blurred, width, height, 1);
+
+  // Sobel gradient components
+  const gx = new Float32Array(gray.length);
+  const gy = new Float32Array(gray.length);
+  const mag = new Float32Array(gray.length);
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x;
+      gx[i] =
+        -blurred[i - width - 1] +
+        blurred[i - width + 1] +
+        -2 * blurred[i - 1] +
+        2 * blurred[i + 1] +
+        -blurred[i + width - 1] +
+        blurred[i + width + 1];
+      gy[i] =
+        -blurred[i - width - 1] -
+        2 * blurred[i - width] -
+        blurred[i - width + 1] +
+        blurred[i + width - 1] +
+        2 * blurred[i + width] +
+        blurred[i + width + 1];
+      mag[i] = Math.sqrt(gx[i] * gx[i] + gy[i] * gy[i]);
+    }
+  }
+
+  // Auto-threshold: top 5% of gradient as high, ×0.4 as low
+  const histMag = new Int32Array(1024);
+  let magMax = 0;
+  for (let i = 0; i < mag.length; i++) if (mag[i] > magMax) magMax = mag[i];
+  const scale = magMax > 0 ? 1023 / magMax : 1;
+  for (let i = 0; i < mag.length; i++)
+    histMag[Math.min(1023, Math.floor(mag[i] * scale))]++;
+  let cumHigh = 0;
+  let high = Math.max(10, magMax * 0.08);
+  for (let i = 1023; i >= 0; i--) {
+    cumHigh += histMag[i];
+    if (cumHigh >= mag.length * 0.05) {
+      high = i / scale;
+      break;
+    }
+  }
+  const low = high * 0.4;
+
+  // Non-maximum suppression along gradient direction
+  const nms = new Float32Array(gray.length);
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x;
+      if (!mag[i]) continue;
+      const angle = ((Math.atan2(gy[i], gx[i]) * 180) / Math.PI + 180) % 180;
+      let n1: number, n2: number;
+      if (angle < 22.5 || angle >= 157.5) {
+        n1 = mag[i - 1];
+        n2 = mag[i + 1];
+      } else if (angle < 67.5) {
+        n1 = mag[i - width + 1];
+        n2 = mag[i + width - 1];
+      } else if (angle < 112.5) {
+        n1 = mag[i - width];
+        n2 = mag[i + width];
+      } else {
+        n1 = mag[i - width - 1];
+        n2 = mag[i + width + 1];
+      }
+      if (mag[i] >= n1 && mag[i] >= n2) nms[i] = mag[i];
+    }
+  }
+
+  // Double threshold + BFS hysteresis
+  const STRONG = 2;
+  const WEAK = 1;
+  const edges = new Uint8Array(gray.length);
+  const queue: number[] = [];
+  for (let i = 0; i < nms.length; i++) {
+    if (nms[i] >= high) {
+      edges[i] = STRONG;
+      queue.push(i);
+    } else if (nms[i] >= low) {
+      edges[i] = WEAK;
+    }
+  }
+  while (queue.length) {
+    const i = queue.pop()!;
+    const y = (i / width) | 0;
+    const x = i % width;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const ny = y + dy;
+        const nx = x + dx;
+        if (ny < 0 || ny >= height || nx < 0 || nx >= width) continue;
+        const ni = ny * width + nx;
+        if (edges[ni] === WEAK) {
+          edges[ni] = STRONG;
+          queue.push(ni);
+        }
+      }
+    }
+  }
+  for (let i = 0; i < edges.length; i++) edges[i] = edges[i] === STRONG ? 255 : 0;
+  return edges;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gaussian adaptive threshold
+// Uses 3-pass box-blur to approximate Gaussian weighting (better than the flat
+// box-blur version for detecting uniform-coloured tile regions).
+// ─────────────────────────────────────────────────────────────────────────────
+export function gaussianAdaptiveThreshold(
+  gray: Float32Array,
+  width: number,
+  height: number,
+  blockRadius = 12,
+  c = 8
+): Uint8Array {
+  const r = Math.max(1, Math.round(blockRadius / 3));
+  let blurred = boxBlur(gray, width, height, r);
+  blurred = boxBlur(blurred, width, height, r);
+  blurred = boxBlur(blurred, width, height, r);
+  const binary = new Uint8Array(gray.length);
+  for (let i = 0; i < gray.length; i++) {
+    binary[i] = gray[i] > blurred[i] - c ? 255 : 0;
+  }
+  return binary;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Morphological helpers (private)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** O(n) separable box dilation – horizontal then vertical pass. */
+function dilateBinaryFast(
+  binary: Uint8Array,
+  width: number,
+  height: number,
+  radius: number
+): Uint8Array {
+  const tmp = new Uint8Array(binary.length);
+  const out = new Uint8Array(binary.length);
+
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    let sum = 0;
+    for (let x = 0; x < Math.min(radius, width); x++) sum += binary[row + x];
+    for (let x = 0; x < width; x++) {
+      const ax = x + radius;
+      const sx = x - radius - 1;
+      if (ax < width) sum += binary[row + ax];
+      if (sx >= 0) sum -= binary[row + sx];
+      if (sum > 0) tmp[row + x] = 1;
+    }
+  }
+  for (let x = 0; x < width; x++) {
+    let sum = 0;
+    for (let y = 0; y < Math.min(radius, height); y++) sum += tmp[y * width + x];
+    for (let y = 0; y < height; y++) {
+      const ay = y + radius;
+      const sy = y - radius - 1;
+      if (ay < height) sum += tmp[ay * width + x];
+      if (sy >= 0) sum -= tmp[sy * width + x];
+      if (sum > 0) out[y * width + x] = 1;
+    }
+  }
+  return out;
+}
+
+/** BFS flood-fill from the image border; zeroes all border-connected foreground. */
+function removeBorderConnected(
+  mask: Uint8Array,
+  width: number,
+  height: number
+): Uint8Array {
+  const out = new Uint8Array(mask);
+  const visited = new Uint8Array(mask.length);
+  const queue: number[] = [];
+
+  const seed = (i: number) => {
+    if (out[i] && !visited[i]) {
+      visited[i] = 1;
+      queue.push(i);
+    }
+  };
+  for (let x = 0; x < width; x++) {
+    seed(x);
+    seed((height - 1) * width + x);
+  }
+  for (let y = 1; y < height - 1; y++) {
+    seed(y * width);
+    seed(y * width + width - 1);
+  }
+
+  const DX = [-1, 1, 0, 0];
+  const DY = [0, 0, -1, 1];
+  while (queue.length) {
+    const i = queue.pop()!;
+    out[i] = 0;
+    const iy = (i / width) | 0;
+    const ix = i % width;
+    for (let d = 0; d < 4; d++) {
+      const ny = iy + DY[d];
+      const nx = ix + DX[d];
+      if (ny < 0 || ny >= height || nx < 0 || nx >= width) continue;
+      const ni = ny * width + nx;
+      if (out[ni] && !visited[ni]) {
+        visited[ni] = 1;
+        queue.push(ni);
+      }
+    }
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tile finder: CLAHE → Canny → dilate → invert → contour blobs
+// Works on any colour/contrast because it detects tile *boundaries* only.
+// ─────────────────────────────────────────────────────────────────────────────
+export function findTilesByEdgeContours(image: ImageData): Blob[] {
+  const { width, height } = image;
+  const imgArea = width * height;
+  const minArea = imgArea * 0.0008;
+  const maxArea = imgArea * 0.13;
+
+  const gray = toGrayscale(image);
+  const tileSize = Math.max(16, Math.round(Math.min(width, height) / 7));
+  const enhanced = claheGrayscale(gray, width, height, tileSize, 4.0);
+
+  const rawEdges = cannyEdges(enhanced, width, height);
+
+  // Dilate edges to close the inter-tile gaps
+  const dilRadius = Math.max(3, Math.round(Math.min(width, height) / 65));
+  const edgesMask = new Uint8Array(rawEdges.length);
+  for (let i = 0; i < rawEdges.length; i++) edgesMask[i] = rawEdges[i] > 0 ? 1 : 0;
+  const dilated = dilateBinaryFast(edgesMask, width, height, dilRadius);
+
+  // Invert: regions enclosed by edges (= tile interiors) become foreground
+  const interior = new Uint8Array(dilated.length);
+  for (let i = 0; i < dilated.length; i++) interior[i] = dilated[i] ? 0 : 1;
+
+  // Remove background (flood fill from image border) so only tile interiors remain
+  const tileOnly = removeBorderConnected(interior, width, height);
+
+  return extractSquareBlobs(tileOnly, width, height, minArea, maxArea, 10);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tile finder: HSV saturation channel fallback
+// Coloured tiles have higher S than a pure-black/white background even when
+// luminance alone can't distinguish them.
+// ─────────────────────────────────────────────────────────────────────────────
+export function findTilesBySaturation(image: ImageData): Blob[] {
+  const { width, height, data } = image;
+  const imgArea = width * height;
+  const minArea = imgArea * 0.001;
+  const maxArea = imgArea * 0.15;
+
+  // Compute adaptive saturation threshold from mid-luminance pixels
+  const satSamples: number[] = [];
+  for (let i = 0; i < data.length; i += 28) {
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    const lum = (r + g + b) / 3;
+    if (lum < 15 || lum > 240) continue;
+    const mx = Math.max(r, g, b);
+    const mn = Math.min(r, g, b);
+    satSamples.push(mx === 0 ? 0 : (mx - mn) / mx);
+  }
+  satSamples.sort((a, b) => a - b);
+  const medSat = satSamples[satSamples.length >> 1] ?? 0.1;
+  const satThresh = Math.max(0.04, medSat * 0.5);
+
+  const mask = new Uint8Array(width * height);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    const lum = (r + g + b) / 3;
+    if (lum < 15 || lum > 240) continue;
+    const mx = Math.max(r, g, b);
+    const mn = Math.min(r, g, b);
+    const sat = mx === 0 ? 0 : (mx - mn) / mx;
+    if (sat >= satThresh) mask[p] = 1;
+  }
+
+  return extractSquareBlobs(mask, width, height, minArea, maxArea, 12);
+}
+
 export function cluster1D(values: number[], tolerance: number): number[] {
   const sorted = [...values].sort((a, b) => a - b);
   const groups: number[][] = [];

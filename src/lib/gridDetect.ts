@@ -1,6 +1,6 @@
 import {
-  adaptiveThreshold,
   boxBlur,
+  claheGrayscale,
   cluster1D,
   edgeProfile,
   estimateFrameTheme,
@@ -8,6 +8,9 @@ import {
   findDarkTileBlobs,
   findGrayTileBlobs,
   findLetterBlobs,
+  findTilesByEdgeContours,
+  findTilesBySaturation,
+  gaussianAdaptiveThreshold,
   type FrameTheme,
   findPeaks,
   invertBinary,
@@ -577,20 +580,24 @@ function tileBlobScore(blobs: Blob[]): number {
 
 function collectBlobs(frame: ImageFrame, theme: FrameTheme): Blob[] {
   const gray = toGrayscale(frame.data);
-  const blurred = boxBlur(gray, frame.width, frame.height, 2);
+  // CLAHE-enhanced grayscale for letter-blob detection (improves faint text)
+  const enhanced = claheGrayscale(gray, frame.width, frame.height);
+  const blurred = boxBlur(enhanced, frame.width, frame.height, 2);
 
+  // Gaussian adaptive threshold (3-pass box-blur ≈ Gaussian weighting) replaces
+  // the flat box-blur mean threshold for letter blob candidates.
   const attempts = [
-    adaptiveThreshold(blurred, frame.width, frame.height, 10, 6),
-    invertBinary(adaptiveThreshold(blurred, frame.width, frame.height, 10, 6)),
-    adaptiveThreshold(blurred, frame.width, frame.height, 16, 10),
-    invertBinary(adaptiveThreshold(blurred, frame.width, frame.height, 16, 10)),
+    gaussianAdaptiveThreshold(blurred, frame.width, frame.height, 10, 6),
+    invertBinary(gaussianAdaptiveThreshold(blurred, frame.width, frame.height, 10, 6)),
+    gaussianAdaptiveThreshold(blurred, frame.width, frame.height, 16, 10),
+    invertBinary(gaussianAdaptiveThreshold(blurred, frame.width, frame.height, 16, 10)),
   ];
 
   if (theme === "dark") {
     attempts.push(
-      adaptiveThreshold(blurred, frame.width, frame.height, 28, 2),
-      invertBinary(adaptiveThreshold(blurred, frame.width, frame.height, 28, 2)),
-      adaptiveThreshold(blurred, frame.width, frame.height, 36, 5)
+      gaussianAdaptiveThreshold(blurred, frame.width, frame.height, 28, 2),
+      invertBinary(gaussianAdaptiveThreshold(blurred, frame.width, frame.height, 28, 2)),
+      gaussianAdaptiveThreshold(blurred, frame.width, frame.height, 36, 5)
     );
   }
 
@@ -600,15 +607,26 @@ function collectBlobs(frame: ImageFrame, theme: FrameTheme): Blob[] {
     if (blobs.length > bestLetter.length) bestLetter = blobs;
   }
 
+  // Colour/luminance threshold tile finders (existing methods)
   const darkTiles = filterMainCluster(findDarkTileBlobs(frame.data));
   const grayTiles = filterMainCluster(findGrayTileBlobs(frame.data));
   const colorTiles = filterMainCluster(findColoredTileBlobs(frame.data));
   const letterTiles = filterMainCluster(bestLetter);
 
+  // New: edge-contour tiles (CLAHE → Canny → dilate → invert)
+  // Works regardless of tile colour or contrast.
+  const edgeTiles = filterMainCluster(findTilesByEdgeContours(frame.data));
+
+  // New: saturation-channel tiles (HSV S fallback for coloured tiles on dark bg)
+  const satTiles = filterMainCluster(findTilesBySaturation(frame.data));
+
   const ranked = [
+    // Edge contours get a small bonus but are outranked by dark/gray on known themes
+    { blobs: edgeTiles, score: tileBlobScore(edgeTiles) + 1 },
     { blobs: darkTiles, score: tileBlobScore(darkTiles) + (theme === "dark" ? 12 : 0) },
     { blobs: grayTiles, score: tileBlobScore(grayTiles) + (theme === "light" ? 4 : 0) },
     { blobs: colorTiles, score: tileBlobScore(colorTiles) + 2 },
+    { blobs: satTiles, score: tileBlobScore(satTiles) + 1 },
     {
       blobs: letterTiles,
       score: theme === "dark" ? -1 : tileBlobScore(letterTiles),
@@ -618,7 +636,11 @@ function collectBlobs(frame: ImageFrame, theme: FrameTheme): Blob[] {
   const winner = ranked[0];
   if (winner.score > 0) return winner.blobs;
 
-  const fallback = [darkTiles, grayTiles, colorTiles, letterTiles].sort(
+  // All scored methods failed — try saturation then edge as last-resort fallbacks
+  if (satTiles.length >= 6) return satTiles;
+  if (edgeTiles.length >= 6) return edgeTiles;
+
+  const fallback = [edgeTiles, darkTiles, grayTiles, colorTiles, satTiles, letterTiles].sort(
     (a, b) => b.length - a.length
   )[0];
   return fallback.length >= 6 ? fallback : [...fallback, ...grayTiles];
