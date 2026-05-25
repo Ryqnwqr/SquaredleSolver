@@ -153,6 +153,55 @@ function finalizeCandidate(candidate: GridCandidate, tileCount: number): GridCan
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Grid dimension inference via spatial clustering
+//
+// Rather than inferring NxN from sqrt(blobCount) — which breaks when only
+// some tiles are detected — we cluster blob centres independently in X and Y
+// and count the resulting groups. Even a partial set (e.g. 12 of 16 tiles on
+// a 4×4 board) will produce 4 X-clusters and 4 Y-clusters.
+// ─────────────────────────────────────────────────────────────────────────────
+function inferGridDimensions(
+  blobs: Blob[]
+): { rows: number; cols: number } | null {
+  // Work with tile-filtered blobs; fall through to all blobs if too few
+  let tiles = filterTileLikeBlobs(filterMainCluster(blobs));
+  if (tiles.length < 4) tiles = filterMainCluster(blobs).slice(0, 40);
+  if (tiles.length < 4) return null;
+
+  const cellH = median(tiles.map((t) => t.h)) || 1;
+  const cellW = median(tiles.map((t) => t.w)) || 1;
+
+  // Tolerance: 55% of median cell dimension absorbs inter-tile gaps and
+  // slight size variance while still separating distinct rows/columns.
+  const rowCenters = cluster1D(tiles.map((t) => t.cy), cellH * 0.55);
+  const colCenters = cluster1D(tiles.map((t) => t.cx), cellW * 0.55);
+
+  const r = rowCenters.length;
+  const c = colCenters.length;
+  if (r < 3 || r > 7 || c < 3 || c > 7) return null;
+  return { rows: r, cols: c };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Grid validation: score how well a candidate's cell centres align with blobs
+// Penalises hallucinated rows/columns (cells with no supporting blob nearby).
+// ─────────────────────────────────────────────────────────────────────────────
+function gridCoverage(candidate: GridCandidate, blobs: Blob[]): number {
+  if (!blobs.length) return 0;
+  const activeCells = candidate.cells.flat().filter((c) => c.active);
+  if (!activeCells.length) return 0;
+  const cellSizeApprox = median(activeCells.map((c) => (c.w + c.h) / 2)) || 1;
+  const matchDist = cellSizeApprox * 0.45;
+  let covered = 0;
+  for (const cell of activeCells) {
+    const cx = cell.x + cell.w / 2;
+    const cy = cell.y + cell.h / 2;
+    if (blobs.some((b) => Math.hypot(b.cx - cx, b.cy - cy) < matchDist)) covered++;
+  }
+  return covered / activeCells.length;
+}
+
 /** Evenly split the puzzle bounding box (dark / merged tile detection). */
 function buildGridFromBlobBounds(
   blobs: Blob[],
@@ -203,7 +252,8 @@ function buildGridFromBlobBounds(
 
 function buildGridFromTileBlobs(blobs: Blob[]): GridCandidate | null {
   const tiles = filterTileLikeBlobs(filterMainCluster(blobs));
-  if (tiles.length < 9) return null;
+  // Allow as few as 6 blobs — enough for a partial 4×4 or 3×3 detection
+  if (tiles.length < 6) return null;
 
   const cellH = median(tiles.map((t) => t.h));
   const cellW = median(tiles.map((t) => t.w));
@@ -690,19 +740,32 @@ export async function detectGridLayout(
   const tileGrid = buildGridFromTileBlobs(blobs);
   if (tileGrid) candidates.push(tileGrid);
 
+  // Prefer cluster-based dimension inference over sqrt(tileCount):
+  //   sqrt(12) = 3  but clustering 12 of 16 tiles gives 4×4 ✓
+  //   sqrt(20) = 4  but clustering 20 of 25 tiles gives 5×5 ✓
+  // Fall back to sqrt only when clustering returns nothing useful.
+  const clusteredDims = inferGridDimensions(blobs);
   const estSize =
     hintSize && hintSize >= 3 && hintSize <= 7
       ? hintSize
-      : tileCount >= 16 && tileCount <= 36
-        ? Math.round(Math.sqrt(tileCount))
-        : 5;
+      : clusteredDims && clusteredDims.rows === clusteredDims.cols
+        ? clusteredDims.rows
+        : tileCount >= 9 && tileCount <= 49
+          ? Math.round(Math.sqrt(tileCount))
+          : 5;
 
-  const uniformBounds = buildGridFromBlobBounds(blobs, estSize, estSize);
+  const uniformRows = clusteredDims?.rows ?? estSize;
+  const uniformCols = clusteredDims?.cols ?? estSize;
+  const uniformBounds = buildGridFromBlobBounds(blobs, uniformRows, uniformCols);
   if (uniformBounds) {
+    // Penalise uniform grids where very few cells have supporting blobs —
+    // this catches hallucinated rows/columns on partial boards (e.g. a 5×5
+    // grid built over a 4×4 board would have ~20% of cells unsupported).
+    const coverage = gridCoverage(uniformBounds, blobs);
+    const sparsePenalty = coverage < 0.3 ? -0.25 : 0;
     candidates.push({
       ...uniformBounds,
-      confidence:
-        uniformBounds.confidence + (theme === "dark" ? 0.22 : 0.05),
+      confidence: uniformBounds.confidence + (theme === "dark" ? 0.22 : 0.05) + sparsePenalty,
       method: uniformBounds.method + (theme === "dark" ? "+dark" : ""),
     });
   }
@@ -760,16 +823,26 @@ export async function detectGridLayout(
   let best = pickBest(candidates);
 
   if (theme === "dark") {
+    // On dark boards the uniform-bounds grid is usually the only reliable
+    // candidate. Prefer it only when coverage is decent (blobs found) or when
+    // pickBest found nothing — avoids hallucinating rows on sparse boards.
     const uniform = candidates.find((c) => c.method.includes("uniform-bounds"));
-    if (uniform && uniform.rows >= 4 && uniform.cols >= 4) {
-      best = uniform;
+    if (uniform && uniform.rows >= 3 && uniform.cols >= 3) {
+      const cov = gridCoverage(uniform, blobs);
+      // Trust uniform when it has coverage support OR nothing else was found
+      if (cov > 0.3 || !best) {
+        best = uniform;
+      }
     }
   }
 
   if (!best) {
-    // 5×5 is by far the most common Squaredle grid; only fall back to 4 if
-    // the hintSize explicitly says so (user override).
-    const size = hintSize ?? 5;
+    // Use cluster inference → estSize → 5 (most common Squaredle grid)
+    const fallbackSquare =
+      clusteredDims && clusteredDims.rows === clusteredDims.cols
+        ? clusteredDims.rows
+        : null;
+    const size = hintSize ?? fallbackSquare ?? estSize;
     const cell = Math.min(frame.width, frame.height) / size;
     const cells: CellRegion[][] = Array.from({ length: size }, (_, r) =>
       Array.from({ length: size }, (_, c) => ({

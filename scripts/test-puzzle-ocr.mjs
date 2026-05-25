@@ -21,6 +21,17 @@ const FIXTURES = {
       { r: 4, c: 0, letter: "A" },
     ],
   },
+  dark3: {
+    image: "puzzle-dark3-5x5.png",
+    // Expected determined from image inspection — verify after first run
+    expected: ["TOEEK", "OEEEO", "EEEEE", "OOEEO", "AIEEE"],
+    critical: [
+      { r: 0, c: 0, letter: "T" },
+      { r: 0, c: 4, letter: "K" },
+      { r: 4, c: 0, letter: "A" },
+      { r: 4, c: 1, letter: "I" },
+    ],
+  },
   light: {
     image: "puzzle-5x5.png",
     expected: ["MTDEK", "HOOJI", "OEYLN", "PHRDA", "ISBOR"],
