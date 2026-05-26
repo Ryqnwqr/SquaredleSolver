@@ -1,3 +1,4 @@
+import type { DictionarySource } from "../lib/dictionaryLookup";
 import type { FoundWord } from "../lib/solver";
 import { WordDefinition } from "./WordDefinition";
 
@@ -7,6 +8,8 @@ interface WordResultsProps {
   onSelect: (word: FoundWord | null) => void;
   filter: string;
   onFilterChange: (value: string) => void;
+  definitionSource: DictionarySource;
+  onDefinitionSourceChange: (source: DictionarySource) => void;
 }
 
 export function WordResults({
@@ -15,6 +18,8 @@ export function WordResults({
   onSelect,
   filter,
   onFilterChange,
+  definitionSource,
+  onDefinitionSourceChange,
 }: WordResultsProps) {
   const q = filter.trim().toLowerCase();
   const filtered = q
@@ -75,7 +80,11 @@ export function WordResults({
           <p className="empty">No words match your filter.</p>
         )}
       </div>
-      <WordDefinition word={selectedWord?.word ?? null} />
+      <WordDefinition
+        word={selectedWord?.word ?? null}
+        definitionSource={definitionSource}
+        onDefinitionSourceChange={onDefinitionSourceChange}
+      />
     </div>
   );
 }

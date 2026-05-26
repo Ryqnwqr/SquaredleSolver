@@ -1,22 +1,36 @@
 import { useEffect, useState } from "react";
 import {
+  DICTIONARY_SOURCE_LABELS,
   formatPartOfSpeech,
-  lookupWord,
+  lookupWithFallback,
+  otherDictionarySource,
   type DictionaryEntry,
+  type DictionarySource,
 } from "../lib/dictionaryLookup";
 
 interface WordDefinitionProps {
   word: string | null;
+  definitionSource: DictionarySource;
+  onDefinitionSourceChange: (source: DictionarySource) => void;
 }
 
 type LoadState =
   | { status: "idle" }
   | { status: "loading"; word: string }
-  | { status: "ready"; entry: DictionaryEntry }
+  | {
+      status: "ready";
+      entry: DictionaryEntry;
+      usedFallback: boolean;
+      primarySource: DictionarySource;
+    }
   | { status: "empty"; word: string }
   | { status: "error"; word: string; message: string };
 
-export function WordDefinition({ word }: WordDefinitionProps) {
+export function WordDefinition({
+  word,
+  definitionSource,
+  onDefinitionSourceChange,
+}: WordDefinitionProps) {
   const [state, setState] = useState<LoadState>({ status: "idle" });
 
   useEffect(() => {
@@ -28,11 +42,16 @@ export function WordDefinition({ word }: WordDefinitionProps) {
     const controller = new AbortController();
     setState({ status: "loading", word });
 
-    lookupWord(word, controller.signal)
-      .then((entry) => {
+    lookupWithFallback(word, definitionSource, controller.signal)
+      .then((result) => {
         if (controller.signal.aborted) return;
-        if (entry) {
-          setState({ status: "ready", entry });
+        if (result) {
+          setState({
+            status: "ready",
+            entry: result.entry,
+            usedFallback: result.usedFallback,
+            primarySource: definitionSource,
+          });
         } else {
           setState({ status: "empty", word });
         }
@@ -45,12 +64,33 @@ export function WordDefinition({ word }: WordDefinitionProps) {
       });
 
     return () => controller.abort();
-  }, [word]);
+  }, [word, definitionSource]);
+
+  const fallbackLabel =
+    DICTIONARY_SOURCE_LABELS[otherDictionarySource(definitionSource)];
 
   return (
     <aside className="word-definition" aria-live="polite">
       <div className="word-definition__header">
         <h3 className="word-definition__label">Definition</h3>
+        <label className="word-definition__source-field">
+          <span className="visually-hidden">Definition source</span>
+          <select
+            className="word-definition__source-select"
+            value={definitionSource}
+            onChange={(e) =>
+              onDefinitionSourceChange(e.target.value as DictionarySource)
+            }
+          >
+            {(Object.keys(DICTIONARY_SOURCE_LABELS) as DictionarySource[]).map(
+              (source) => (
+                <option key={source} value={source}>
+                  {DICTIONARY_SOURCE_LABELS[source]}
+                </option>
+              )
+            )}
+          </select>
+        </label>
       </div>
 
       <div className="word-definition__body">
@@ -69,7 +109,8 @@ export function WordDefinition({ word }: WordDefinitionProps) {
 
         {state.status === "empty" && (
           <p className="word-definition__placeholder">
-            No dictionary entry found for{" "}
+            No entry in{" "}
+            {DICTIONARY_SOURCE_LABELS[definitionSource]} or {fallbackLabel} for{" "}
             <strong className="word-definition__word-inline">{state.word}</strong>
             . It may be obscure, regional, or a game-only form.
           </p>
@@ -88,7 +129,23 @@ export function WordDefinition({ word }: WordDefinitionProps) {
                   {state.entry.phonetic}
                 </span>
               )}
+              <span className="word-definition__source-badge">
+                {state.entry.sourceLabel}
+                {state.usedFallback && (
+                  <span className="word-definition__source-fallback">
+                    {" "}
+                    · fallback
+                  </span>
+                )}
+              </span>
             </div>
+            {state.usedFallback && (
+              <p className="word-definition__fallback-note">
+                Not found in{" "}
+                {DICTIONARY_SOURCE_LABELS[state.primarySource]} — showing{" "}
+                {state.entry.sourceLabel} instead.
+              </p>
+            )}
             <div className="word-definition__senses">
               {state.entry.senses.map((sense) => (
                 <section

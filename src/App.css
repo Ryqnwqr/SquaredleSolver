@@ -746,6 +746,10 @@ html::-webkit-scrollbar-corner {
 }
 
 .word-definition__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   flex-shrink: 0;
   margin-bottom: 0.65rem;
 }
@@ -757,6 +761,51 @@ html::-webkit-scrollbar-corner {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted-soft);
+  flex-shrink: 0;
+}
+
+.word-definition__source-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.word-definition__source-select {
+  max-width: 100%;
+  padding: 0.35rem 0.55rem;
+  padding-right: 1.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.word-definition__source-select:hover {
+  border-color: var(--border);
+}
+
+.word-definition__source-select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: var(--surface-2);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .word-definition__body {
@@ -846,6 +895,33 @@ html::-webkit-scrollbar-corner {
   font-size: 0.9rem;
   color: var(--muted);
   font-style: italic;
+}
+
+.word-definition__source-badge {
+  margin-left: auto;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.word-definition__source-fallback {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: color-mix(in srgb, var(--accent) 75%, var(--muted));
+}
+
+.word-definition__fallback-note {
+  margin: -0.35rem 0 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--muted);
 }
 
 .word-definition__senses {

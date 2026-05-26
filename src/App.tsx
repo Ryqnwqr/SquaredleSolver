@@ -17,6 +17,9 @@ import { BLOCKED } from "./lib/gridDetect";
 import { normalizeOcrToLetter } from "./lib/letterNormalize";
 import { extractGridFromImage, type OcrProgress } from "./lib/ocr";
 import {
+  type DictionarySource,
+} from "./lib/dictionaryLookup";
+import {
   findAllWords,
   isPlayableCell,
   normalizeGrid,
@@ -48,6 +51,8 @@ export default function App() {
   const [words, setWords] = useState<FoundWord[]>([]);
   const [selectedWord, setSelectedWord] = useState<FoundWord | null>(null);
   const [filter, setFilter] = useState("");
+  const [definitionSource, setDefinitionSource] =
+    useState<DictionarySource>("freeDictionary");
   const [error, setError] = useState<string | null>(null);
   const [formatToast, setFormatToast] = useState(false);
   const handleImageUploadRef = useRef<(file: File) => void>(() => {});
@@ -402,6 +407,8 @@ export default function App() {
             onSelect={setSelectedWord}
             filter={filter}
             onFilterChange={setFilter}
+            definitionSource={definitionSource}
+            onDefinitionSourceChange={setDefinitionSource}
           />
         </section>
       </main>
