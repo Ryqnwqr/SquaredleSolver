@@ -696,6 +696,30 @@ export function resolveLetter(
         return shapeBest;
       }
     }
+    // Strongly symmetric round shape with balanced bottom corners and no
+    // middle bar is O — Tesseract on tiny low-res cells can drift to E when
+    // strokes blur. Guarded by requiring corroborating *Tesseract* O
+    // evidence (raw vote weight clearly above the shape baseline of 65),
+    // not the inflated post-shape score. Without this guard, U/D/B with
+    // O-like geometry would also flip.
+    if (
+      best !== "O" &&
+      scoreO(metrics) > 0.9 &&
+      !metrics.hasMiddleBar &&
+      metrics.symmetry > 0.95 &&
+      metrics.midRowSpan > 0.85 &&
+      metrics.midRowRightRatio > 0.35 &&
+      Math.abs(metrics.bottomLeftRatio - metrics.bottomRightRatio) < 0.06 &&
+      metrics.bottomLeftRatio > 0.15 &&
+      metrics.bottomRightRatio > 0.15
+    ) {
+      const bestVote = scores.get(best) ?? 0;
+      const rawOVote = voteTotal(votes, "O");
+      // > 80 means at least one Tesseract variant returned O beyond the
+      // ~65-weight shape vote.
+      if (bestVote < 600 && rawOVote > 80) return "O";
+    }
+
     if (best === "B") {
       const i = scoreI(metrics);
       const b = scoreB(metrics);

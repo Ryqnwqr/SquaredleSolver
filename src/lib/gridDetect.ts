@@ -1092,13 +1092,27 @@ function ensurePlayableCells(
 
   if (missing <= 0) return cells;
 
+  // Recognize ANY corner-cut layout: a Squaredle-style irregular grid where
+  // 1–4 of the four geometric corner cells are blocked and every other cell
+  // is active. Covers all combinations (top-left, top-right, bottom-left,
+  // bottom-right, or any mix). Without this, tile-based detection correctly
+  // marks corner blanks inactive, then we'd wrongly flip them back to
+  // active and OCR would invent a letter ("B") for the empty rectangle.
+  const cornerCoords: Array<[number, number]> = [
+    [0, 0],
+    [0, cols - 1],
+    [rows - 1, 0],
+    [rows - 1, cols - 1],
+  ];
+  const inactiveAtCorners = cornerCoords.filter(
+    ([r, c]) => cells[r]?.[c] && !cells[r][c].active
+  ).length;
+  const inactiveCells = cells.flat().filter((c) => !c.active).length;
   const isCornerCut =
-    rows === 5 &&
-    cols === 5 &&
-    missing >= 1 &&
-    missing <= 4 &&
-    !cells[0]?.[0]?.active &&
-    !cells[0]?.[4]?.active;
+    rows >= 4 &&
+    cols >= 4 &&
+    inactiveAtCorners >= 1 &&
+    inactiveAtCorners === inactiveCells;
 
   if (!isCornerCut && missing <= Math.max(4, Math.floor(total * 0.2))) {
     return cells.map((row) => row.map((cell) => ({ ...cell, active: true })));

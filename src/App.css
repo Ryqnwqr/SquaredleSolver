@@ -2,20 +2,23 @@
   --bg: #0f1419;
   --surface: #1a222d;
   --surface-2: #243040;
-  --border: #2e3d52;
+  --border: #2a3849;
+  --border-soft: color-mix(in srgb, var(--border) 65%, transparent);
   --text: #e8edf4;
   --muted: #8b9cb3;
+  --muted-soft: color-mix(in srgb, var(--muted) 70%, transparent);
   --accent: #3dd68c;
   --accent-dim: #2a9d66;
   --highlight: #f4a261;
   --error: #f07178;
-  --radius: 12px;
+  --radius: 14px;
+  --radius-sm: 8px;
   --font: "DM Sans", system-ui, sans-serif;
   --mono: "JetBrains Mono", monospace;
-  --scrollbar-size: 10px;
-  --scrollbar-track: color-mix(in srgb, var(--surface) 88%, var(--bg));
-  --scrollbar-thumb: color-mix(in srgb, var(--border) 70%, var(--muted));
-  --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 28%, var(--surface-2));
+  --scrollbar-size: 8px;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: color-mix(in srgb, var(--border) 60%, var(--muted));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 32%, var(--surface-2));
 }
 
 *,
@@ -193,6 +196,48 @@ html::-webkit-scrollbar-corner {
   margin-bottom: 2rem;
 }
 
+.header-brand {
+  flex: 1;
+  min-width: min(100%, 20rem);
+}
+
+.header-copy {
+  min-width: 0;
+}
+
+.header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0.1rem 0 0.35rem;
+}
+
+.header-title-row h1 {
+  margin: 0;
+}
+
+.site-logo {
+  width: 2.35rem;
+  height: 2.35rem;
+  flex-shrink: 0;
+  border-radius: 9px;
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+.site-logo__bg {
+  fill: var(--surface);
+}
+
+.site-logo__tile {
+  fill: var(--surface-2);
+}
+
+.site-logo__tile--active {
+  fill: var(--accent);
+}
+
 .eyebrow {
   margin: 0 0 0.25rem;
   font-size: 0.75rem;
@@ -203,10 +248,10 @@ html::-webkit-scrollbar-corner {
 }
 
 .header h1 {
-  margin: 0;
   font-size: clamp(1.75rem, 4vw, 2.25rem);
   font-weight: 700;
   letter-spacing: -0.02em;
+  line-height: 1.1;
 }
 
 .subtitle {
@@ -249,9 +294,9 @@ html::-webkit-scrollbar-corner {
 
 .panel {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  padding: 1.25rem;
+  padding: 1.35rem;
 }
 
 .panel h2 {
@@ -502,16 +547,28 @@ html::-webkit-scrollbar-corner {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0.15rem 0.35rem 0.15rem 0;
-  margin-right: -0.15rem;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--bg) 35%, transparent);
+  /* Breathing room on both sides; small bottom padding so the last row
+     doesn't sit on the panel border. Right padding leaves space for the
+     scrollbar without content shifting on overflow. */
+  padding: 0.25rem 0.5rem 0.5rem 0.25rem;
+  border-radius: var(--radius-sm);
   scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb-hover) var(--scrollbar-track);
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .word-list::-webkit-scrollbar-track {
-  margin: 6px 0;
+  margin: 4px 0;
+  background: transparent;
+}
+
+.word-list::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+}
+
+.word-list::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
 }
 
 .length-group {

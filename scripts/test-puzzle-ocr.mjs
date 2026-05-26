@@ -98,6 +98,19 @@ const FIXTURES = {
       { r: 2, c: 3, letter: "N" },
     ],
   },
+  light5x5Cut: {
+    image: "light-5x5-cornercut.png",
+    hint: 5,
+    // Corner-cut grid: top-right (0,4) and bottom-left (4,0) are blocked.
+    // BLOCKED cells are represented by "." in the normalized grid output.
+    expected: ["GRAI.", "EYNUL", "RDONF", "AMUBY", ".PITA"],
+    critical: [
+      { r: 0, c: 4, letter: "." },
+      { r: 4, c: 0, letter: "." },
+      { r: 3, c: 3, letter: "B" },
+      { r: 4, c: 2, letter: "I" },
+    ],
+  },
   dark4x4: {
     image: "puzzle-dark-4x4.png",
     hint: 4,

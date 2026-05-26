@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FormatToast } from "./components/FormatToast";
+import { SiteLogo } from "./components/SiteLogo";
 import { LetterGrid } from "./components/LetterGrid";
 import { WordResults } from "./components/WordResults";
 import {
@@ -222,14 +223,19 @@ export default function App() {
     <div className="app">
       <FormatToast visible={formatToast} onDismiss={dismissFormatToast} />
       <header className="header">
-        <div>
-          <p className="eyebrow">Word search assistant</p>
-          <h1>Squaredle Solver</h1>
-          <p className="subtitle">
+        <div className="header-brand">
+          <div className="header-copy">
+            <p className="eyebrow">Word search assistant</p>
+            <div className="header-title-row">
+              <SiteLogo className="site-logo" />
+              <h1>Squaredle Solver</h1>
+            </div>
+            <p className="subtitle">
             Upload a screenshot — the app detects grid shape automatically
             (4×4, 5×5, corner-cut layouts, and more). Fix any misread letters,
             then find all valid words.
-          </p>
+            </p>
+          </div>
         </div>
         {dictLoading && (
           <span className="badge loading">Loading dictionary…</span>
