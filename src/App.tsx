@@ -26,7 +26,6 @@ import type { Trie } from "./lib/trie";
 import "./App.css";
 
 const AUTO_SIZE = 0;
-const DEFAULT_SIZE = 4;
 
 function emptyGrid(rows: number, cols: number): string[][] {
   return Array.from({ length: rows }, () =>
@@ -40,9 +39,8 @@ export default function App() {
   const [dictLoading, setDictLoading] = useState(true);
   const [trie, setTrie] = useState<Trie | null>(null);
   const [sizeHint, setSizeHint] = useState(AUTO_SIZE);
-  const [grid, setGrid] = useState<string[][]>(() =>
-    emptyGrid(DEFAULT_SIZE, DEFAULT_SIZE)
-  );
+  const [autoGridReady, setAutoGridReady] = useState(false);
+  const [grid, setGrid] = useState<string[][]>([]);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [ocrProgress, setOcrProgress] = useState<OcrProgress | null>(null);
   const [detectionInfo, setDetectionInfo] = useState<string | null>(null);
@@ -95,7 +93,16 @@ export default function App() {
   const applySizeHint = useCallback(
     (hint: number) => {
       setSizeHint(hint);
-      if (hint > 0) resizeGrid(hint, hint);
+      if (hint > 0) {
+        setAutoGridReady(true);
+        resizeGrid(hint, hint);
+      } else {
+        setAutoGridReady(false);
+        setGrid([]);
+        setWords([]);
+        setSelectedWord(null);
+        setDetectionInfo(null);
+      }
     },
     [resizeGrid]
   );
@@ -149,6 +156,7 @@ export default function App() {
         );
         const normalized = normalizeGrid(extracted);
         setGrid(normalized);
+        setAutoGridReady(true);
         setOcrProgress(null);
 
         const active = normalized.flat().filter(isPlayableCell).length;
@@ -208,6 +216,7 @@ export default function App() {
 
   const rows = grid.length;
   const cols = grid[0]?.length ?? 0;
+  const pendingAutoGrid = sizeHint === AUTO_SIZE && !autoGridReady;
 
   const progressLabel =
     busy && ocrProgress
@@ -315,32 +324,66 @@ export default function App() {
           <div className="grid-block">
             <div className="grid-block-header">
               <h3>
-                Letter grid {rows > 0 && cols > 0 ? `(${rows}×${cols})` : ""}
+                {pendingAutoGrid
+                  ? "Letter grid"
+                  : `Letter grid (${rows}×${cols})`}
               </h3>
               <button
                 type="button"
                 className="btn secondary"
-                onClick={() =>
-                  setGrid(emptyGrid(rows || DEFAULT_SIZE, cols || DEFAULT_SIZE))
-                }
-                disabled={busy}
+                onClick={() => {
+                  if (pendingAutoGrid) return;
+                  if (sizeHint === AUTO_SIZE) {
+                    setAutoGridReady(false);
+                    setGrid([]);
+                    setWords([]);
+                    setSelectedWord(null);
+                    setDetectionInfo(null);
+                  } else {
+                    setGrid(emptyGrid(rows, cols));
+                    setWords([]);
+                    setSelectedWord(null);
+                  }
+                }}
+                disabled={busy || pendingAutoGrid}
               >
                 Clear
               </button>
             </div>
-            <LetterGrid
-              grid={grid}
-              highlightPath={selectedWord?.path}
-              editable
-              onCellChange={handleCellChange}
-            />
+            {pendingAutoGrid ? (
+              <div className="grid-pending" aria-live="polite">
+                <span className="grid-pending__icon" aria-hidden>
+                  <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="4" y="4" width="11" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+                    <rect x="17" y="4" width="11" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" opacity="0.5" />
+                    <rect x="4" y="17" width="11" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" opacity="0.5" />
+                    <rect x="17" y="17" width="11" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" opacity="0.5" />
+                  </svg>
+                </span>
+                <p className="grid-pending__title">
+                  {busy ? "Detecting grid…" : "Pending detection"}
+                </p>
+                <p className="grid-pending__hint">
+                  {busy
+                    ? "Reading letters from your screenshot."
+                    : "Upload or paste a puzzle image to detect size and letters automatically."}
+                </p>
+              </div>
+            ) : (
+              <LetterGrid
+                grid={grid}
+                highlightPath={selectedWord?.path}
+                editable
+                onCellChange={handleCellChange}
+              />
+            )}
           </div>
 
           <button
             type="button"
             className="btn primary"
             onClick={runSolver}
-            disabled={!dictReady || busy}
+            disabled={!dictReady || busy || pendingAutoGrid}
           >
             Find words
           </button>

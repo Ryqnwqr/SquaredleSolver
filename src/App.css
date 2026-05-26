@@ -406,6 +406,49 @@ html::-webkit-scrollbar-corner {
   margin-bottom: 1rem;
 }
 
+.grid-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 10.5rem;
+  padding: 1.35rem 1.25rem;
+  text-align: center;
+  border: 1.5px dashed var(--border-soft);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-2) 40%, transparent);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.grid-pending__icon {
+  display: flex;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+.grid-pending__icon svg {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+.grid-pending__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.grid-pending__hint {
+  margin: 0;
+  max-width: 22rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 .grid-block-header {
   display: flex;
   align-items: center;
