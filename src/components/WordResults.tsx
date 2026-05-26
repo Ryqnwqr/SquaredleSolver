@@ -1,4 +1,5 @@
 import type { FoundWord } from "../lib/solver";
+import { WordDefinition } from "./WordDefinition";
 
 interface WordResultsProps {
   words: FoundWord[];
@@ -74,6 +75,7 @@ export function WordResults({
           <p className="empty">No words match your filter.</p>
         )}
       </div>
+      <WordDefinition word={selectedWord?.word ?? null} />
     </div>
   );
 }
