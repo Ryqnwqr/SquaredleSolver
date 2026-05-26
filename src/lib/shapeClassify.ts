@@ -514,6 +514,15 @@ export function resolveLetter(
   metrics: ShapeMetrics | null,
   theme: "dark" | "light" = "light"
 ): string {
+  // Extreme tall-narrow shape can only be I. Tesseract often scatters weak
+  // votes (N, B, C, H, J) over the tiny rendering of a single vertical
+  // stroke; no other letter has aspect > 2.0 with a clean isolated bbox, so
+  // trust shape unconditionally here. This rescues cells like the corner
+  // "I" on light-theme puzzles with hint-number contamination.
+  if (metrics && scoreI(metrics) >= 0.8 && metrics.aspect > 2.0) {
+    return "I";
+  }
+
   const scores = new Map<string, number>();
   for (const { letter, weight } of votes) {
     scores.set(letter, (scores.get(letter) ?? 0) + weight);

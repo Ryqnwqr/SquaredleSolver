@@ -23,6 +23,7 @@ const FIXTURES = {
   light4x4Min:   { image: "light-4x4-minimal.png",   rows: 4, cols: 4 },
   light4x4Sh:    { image: "light-4x4-shadow.png",    rows: 4, cols: 4 },
   dark5x5Teal:   { image: "dark-5x5-teal.png",       rows: 5, cols: 5 },
+  light4x4Hints: { image: "light-4x4-hints.png",     rows: 4, cols: 4 },
 };
 
 const argv = process.argv.slice(2);

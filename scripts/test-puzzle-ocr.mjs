@@ -88,6 +88,16 @@ const FIXTURES = {
       { r: 4, c: 4, letter: "L" },
     ],
   },
+  light4x4Hints: {
+    image: "light-4x4-hints.png",
+    hint: 4,
+    expected: ["WCAS", "ESGT", "NPEN", "APRI"],
+    critical: [
+      { r: 3, c: 3, letter: "I" },
+      { r: 2, c: 0, letter: "N" },
+      { r: 2, c: 3, letter: "N" },
+    ],
+  },
   dark4x4: {
     image: "puzzle-dark-4x4.png",
     hint: 4,

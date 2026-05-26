@@ -12,6 +12,10 @@
   --radius: 12px;
   --font: "DM Sans", system-ui, sans-serif;
   --mono: "JetBrains Mono", monospace;
+  --scrollbar-size: 10px;
+  --scrollbar-track: color-mix(in srgb, var(--surface) 88%, var(--bg));
+  --scrollbar-thumb: color-mix(in srgb, var(--border) 70%, var(--muted));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 28%, var(--surface-2));
 }
 
 *,
@@ -27,6 +31,41 @@ body {
   color: var(--text);
   line-height: 1.5;
   min-height: 100vh;
+}
+
+/* Themed scrollbars (page + scrollable panels) */
+html {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+html::-webkit-scrollbar,
+.word-list::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+html::-webkit-scrollbar-track,
+.word-list::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 999px;
+}
+
+html::-webkit-scrollbar-thumb,
+.word-list::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 2px solid var(--scrollbar-track);
+  border-radius: 999px;
+}
+
+html::-webkit-scrollbar-thumb:hover,
+.word-list::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+html::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
 }
 
 #root {
@@ -419,6 +458,12 @@ body {
   flex-direction: column;
 }
 
+@media (max-width: 860px) {
+  .results-panel {
+    max-height: min(70vh, calc(100vh - 10rem));
+  }
+}
+
 .word-results {
   display: flex;
   flex-direction: column;
@@ -453,8 +498,20 @@ body {
 }
 
 .word-list {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding-right: 0.25rem;
+  overflow-x: hidden;
+  padding: 0.15rem 0.35rem 0.15rem 0;
+  margin-right: -0.15rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb-hover) var(--scrollbar-track);
+}
+
+.word-list::-webkit-scrollbar-track {
+  margin: 6px 0;
 }
 
 .length-group {
