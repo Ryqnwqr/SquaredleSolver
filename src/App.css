@@ -381,9 +381,9 @@ html::-webkit-scrollbar-corner {
 
 .preview {
   margin: 0 0 1rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-soft);
 }
 
 .preview img {
@@ -391,6 +391,31 @@ html::-webkit-scrollbar-corner {
   width: 100%;
   max-height: 160px;
   object-fit: cover;
+}
+
+/* Reference preview sits next to the editable grid — same max width so
+   the two read as a side-by-side pair, with a caption so the user knows
+   it's the source-of-truth image to compare letters against. */
+.preview--reference {
+  margin: 0 0 0.85rem;
+  max-width: 280px;
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
+}
+
+.preview--reference figcaption {
+  padding: 0.4rem 0.7rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.preview--reference img {
+  max-height: none;
+  object-fit: contain;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
 }
 
 .error {
@@ -768,7 +793,16 @@ html::-webkit-scrollbar-corner {
   flex: 1;
   min-width: 0;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.word-definition__source-prompt {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .word-definition__source-select {

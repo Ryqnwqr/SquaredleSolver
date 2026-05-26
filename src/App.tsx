@@ -152,13 +152,17 @@ export default function App() {
     reader.onload = async () => {
       try {
         const src = reader.result as string;
+        // Show the raw upload immediately so the user has something to look
+        // at while OCR runs; we'll swap to the smart-cropped grid preview
+        // when detection finishes.
         setImagePreview(src);
         const hint = sizeHint > 0 ? sizeHint : undefined;
-        const { grid: extracted, detection } = await extractGridFromImage(
-          src,
-          hint,
-          setOcrProgress
-        );
+        const {
+          grid: extracted,
+          detection,
+          croppedPreview,
+        } = await extractGridFromImage(src, hint, setOcrProgress);
+        setImagePreview(croppedPreview);
         const normalized = normalizeGrid(extracted);
         setGrid(normalized);
         setAutoGridReady(true);
@@ -318,12 +322,6 @@ export default function App() {
             <p className="detection-info">{detectionInfo}</p>
           )}
 
-          {imagePreview && (
-            <figure className="preview">
-              <img src={imagePreview} alt="Uploaded puzzle" />
-            </figure>
-          )}
-
           {error && <p className="error">{error}</p>}
 
           <div className="grid-block">
@@ -355,6 +353,15 @@ export default function App() {
                 Clear
               </button>
             </div>
+            {imagePreview && !pendingAutoGrid && (
+              <figure
+                className="preview preview--reference"
+                aria-label="Cropped source image — reference for the editable grid"
+              >
+                <figcaption>Source image (for reference)</figcaption>
+                <img src={imagePreview} alt="Detected puzzle grid" />
+              </figure>
+            )}
             {pendingAutoGrid ? (
               <div className="grid-pending" aria-live="polite">
                 <span className="grid-pending__icon" aria-hidden>

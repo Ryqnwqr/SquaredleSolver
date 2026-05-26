@@ -452,6 +452,46 @@ export interface OcrProgress {
 export interface ExtractResult {
   grid: string[][];
   detection: GridDetection;
+  /**
+   * A PNG data URL containing just the puzzle grid region of the source
+   * image — the bounding rectangle around all active cells with a small
+   * margin so tile borders aren't clipped. Useful as a reference image
+   * placed next to the editable grid for letter verification.
+   */
+  croppedPreview: string;
+}
+
+/**
+ * Build a data URL containing only the grid region of the detected frame,
+ * with a small padding margin so tile borders aren't clipped. Width is
+ * capped at 480px to keep the preview sensible on small panels; aspect
+ * ratio of the source is always preserved.
+ */
+function makeGridPreview(detection: GridDetection): string {
+  const { frame, bounds } = detection;
+  const padX = Math.max(6, Math.round(bounds.w * 0.04));
+  const padY = Math.max(6, Math.round(bounds.h * 0.04));
+  const sx = Math.max(0, bounds.x - padX);
+  const sy = Math.max(0, bounds.y - padY);
+  const sw = Math.min(frame.width - sx, bounds.w + padX * 2);
+  const sh = Math.min(frame.height - sy, bounds.h + padY * 2);
+
+  if (sw <= 0 || sh <= 0) {
+    return frame.canvas.toDataURL("image/png");
+  }
+
+  const MAX_OUT = 480;
+  const scale = Math.min(1, MAX_OUT / Math.max(sw, sh));
+  const outW = Math.max(1, Math.round(sw * scale));
+  const outH = Math.max(1, Math.round(sh * scale));
+
+  const out = document.createElement("canvas");
+  out.width = outW;
+  out.height = outH;
+  const ctx = out.getContext("2d")!;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(frame.canvas, sx, sy, sw, sh, 0, 0, outW, outH);
+  return out.toDataURL("image/png");
 }
 
 export async function extractGridFromImage(
@@ -506,5 +546,6 @@ export async function extractGridFromImage(
     grid[r][c] = letter || "?";
   }
 
-  return { grid, detection };
+  const croppedPreview = makeGridPreview(detection);
+  return { grid, detection, croppedPreview };
 }

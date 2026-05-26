@@ -74,7 +74,7 @@ export function WordDefinition({
       <div className="word-definition__header">
         <h3 className="word-definition__label">Definition</h3>
         <label className="word-definition__source-field">
-          <span className="visually-hidden">Definition source</span>
+          <span className="word-definition__source-prompt">Preferred source:</span>
           <select
             className="word-definition__source-select"
             value={definitionSource}

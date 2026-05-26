@@ -698,20 +698,22 @@ export function resolveLetter(
     }
     // Strongly symmetric round shape with balanced bottom corners and no
     // middle bar is O — Tesseract on tiny low-res cells can drift to E when
-    // strokes blur. Guarded by requiring corroborating *Tesseract* O
-    // evidence (raw vote weight clearly above the shape baseline of 65),
-    // not the inflated post-shape score. Without this guard, U/D/B with
-    // O-like geometry would also flip.
+    // strokes blur. Guarded by:
+    //   1. Requiring *Tesseract* O evidence (raw vote > shape baseline 65).
+    //   2. A high midRowRightRatio (≥0.42): for true O the open loop puts
+    //      ~half the mid-row ink on the right, whereas B/D/U with mistakenly
+    //      undetected middle bars yield 0.30–0.40 because of bowl asymmetry.
+    //   3. The midrow extending almost to both bbox edges.
     if (
       best !== "O" &&
       scoreO(metrics) > 0.9 &&
       !metrics.hasMiddleBar &&
       metrics.symmetry > 0.95 &&
-      metrics.midRowSpan > 0.85 &&
-      metrics.midRowRightRatio > 0.35 &&
-      Math.abs(metrics.bottomLeftRatio - metrics.bottomRightRatio) < 0.06 &&
-      metrics.bottomLeftRatio > 0.15 &&
-      metrics.bottomRightRatio > 0.15
+      metrics.midRowSpan > 0.9 &&
+      metrics.midRowRightRatio > 0.42 &&
+      Math.abs(metrics.bottomLeftRatio - metrics.bottomRightRatio) < 0.05 &&
+      metrics.bottomLeftRatio > 0.18 &&
+      metrics.bottomRightRatio > 0.18
     ) {
       const bestVote = scores.get(best) ?? 0;
       const rawOVote = voteTotal(votes, "O");
