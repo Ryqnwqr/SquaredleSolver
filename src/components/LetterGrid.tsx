@@ -68,8 +68,6 @@ export function LetterGrid({
     validPath.length > 0
       ? `${validPath[validPath.length - 1].row},${validPath[validPath.length - 1].col}`
       : null;
-  const pathLastIndex = validPath.length - 1;
-
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -248,7 +246,7 @@ export function LetterGrid({
             return (
               <span
                 key={key}
-                className={`letter-cell-step${i === 0 ? " letter-cell-step--start" : ""}${i === pathLastIndex && pathLastIndex > 0 ? " letter-cell-step--end" : ""}`}
+                className={`letter-cell-step${i === 0 ? " letter-cell-step--start" : ""}`}
                 style={{ left: pos.x, top: pos.y }}
               >
                 {i + 1}

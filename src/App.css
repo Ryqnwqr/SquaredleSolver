@@ -617,11 +617,6 @@ html::-webkit-scrollbar-corner {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
-.letter-cell-step--end {
-  background: var(--error);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--error) 45%, transparent);
-}
-
 .letter-cell.blocked {
   visibility: hidden;
   pointer-events: none;
