@@ -1068,6 +1068,16 @@ export async function detectGridLayout(
 
   const cells = ensurePlayableCells(best.cells, best.rows, best.cols);
 
+  // ── Sanity gate: refuse non-puzzle images ────────────────────────────
+  // Methods like uniform-frame / uniform-bounds happily divide *any* image
+  // into a grid, so we can't use the chosen candidate alone as proof that
+  // a puzzle exists. Validate by independently confirming that letter ink
+  // in the frame clusters into a grid roughly matching the chosen one.
+  // Letters are the one signal every real Squaredle puzzle must produce
+  // (otherwise the puzzle is unreadable), so a non-puzzle image — random
+  // text, a diagram, a blank screenshot — almost never satisfies this.
+  assertGridPlausible(best, cells, robustLetters, lettersGrid, frame);
+
   return {
     rows: best.rows,
     cols: best.cols,
@@ -1078,6 +1088,85 @@ export async function detectGridLayout(
     theme,
     frame,
   };
+}
+
+export class NotAPuzzleError extends Error {
+  constructor(reason: string) {
+    super(`Could not find a Squaredle grid in this image (${reason}).`);
+    this.name = "NotAPuzzleError";
+  }
+}
+
+/**
+ * Reject obvious non-puzzles before returning a fabricated grid. A real
+ * puzzle's letters cluster into a clean N×N (3..7) pattern; random text,
+ * blank screenshots, and diagrams do not.
+ */
+function assertGridPlausible(
+  best: GridCandidate,
+  cells: CellRegion[][],
+  robustLetters: ReturnType<typeof findLetterBlobsRobust>,
+  lettersGrid: ReturnType<typeof inferGridFromLetterBlobs> | null,
+  frame: ImageFrame
+): void {
+  const activeCells = cells.flat().filter((c) => c.active).length;
+  const blobs = robustLetters.blobs;
+
+  // 1. Too few letter blobs to fill even a small grid.
+  if (blobs.length < Math.max(9, activeCells * 0.6)) {
+    throw new NotAPuzzleError(
+      blobs.length < 4
+        ? "no letters detected"
+        : `only ${blobs.length} letter-like shapes found, expected ≥ ${activeCells}`
+    );
+  }
+
+  // 2. Letters DID cluster — verify their grid dimensions agree (within ±1)
+  //    with what we're about to return. This catches text paragraphs whose
+  //    blobs cluster into 15+ rows even though uniform-frame chose 3×3.
+  if (lettersGrid) {
+    const rowDelta = Math.abs(lettersGrid.rows - best.rows);
+    const colDelta = Math.abs(lettersGrid.cols - best.cols);
+    if (rowDelta > 1 || colDelta > 1) {
+      throw new NotAPuzzleError(
+        `letter layout ${lettersGrid.rows}×${lettersGrid.cols} doesn't match detected ${best.rows}×${best.cols}`
+      );
+    }
+  } else {
+    // 3. Letters exist but DON'T form any clean N×N grid (cluster count >7
+    //    or <3). Almost always non-puzzle content (paragraphs, diagrams).
+    //    A real puzzle should still produce a clean letter grid even when
+    //    a non-letters method ultimately won.
+    throw new NotAPuzzleError(
+      "letters present but they don't form a square grid"
+    );
+  }
+
+  // 4. Coverage check: each active cell should contain ≥1 letter blob
+  //    centroid. Cheap to compute and catches misaligned uniform grids.
+  let covered = 0;
+  for (const row of cells) {
+    for (const cell of row) {
+      if (!cell.active) continue;
+      const x0 = cell.x;
+      const y0 = cell.y;
+      const x1 = cell.x + cell.w;
+      const y1 = cell.y + cell.h;
+      const hit = blobs.some(
+        (b) => b.cx >= x0 && b.cx <= x1 && b.cy >= y0 && b.cy <= y1
+      );
+      if (hit) covered++;
+    }
+  }
+  const coverage = activeCells > 0 ? covered / activeCells : 0;
+  if (coverage < 0.6) {
+    throw new NotAPuzzleError(
+      `only ${Math.round(coverage * 100)}% of cells contain letter ink`
+    );
+  }
+  // Suppress unused-import warning when assertion is shipped without further
+  // use of `frame` in the type signature.
+  void frame;
 }
 
 /** Grey/faded Squaredle tiles are still letters — only corner-cut slots stay empty */

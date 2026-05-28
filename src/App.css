@@ -78,7 +78,7 @@ html::-webkit-scrollbar-corner {
 .app {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 2rem 1.25rem 3rem;
+  padding: 2rem 0.45rem 3rem;
 }
 
 .format-toast {
@@ -357,9 +357,25 @@ html::-webkit-scrollbar-corner {
   text-align: center;
 }
 
-.upload-zone:hover {
+.upload-zone:hover,
+.upload-zone.upload-zone--dragover {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
   background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.upload-zone.upload-zone--dragover {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.upload-zone.upload-zone--dragover .upload-label {
+  color: color-mix(in srgb, var(--accent) 90%, var(--text));
+}
+
+.upload-zone.upload-zone--dragover .upload-hint {
+  color: color-mix(in srgb, var(--accent) 70%, var(--muted));
 }
 
 .upload-zone input {
@@ -575,17 +591,33 @@ html::-webkit-scrollbar-corner {
 }
 
 .letter-cell.path-start {
-  border-color: color-mix(in srgb, var(--error) 75%, var(--highlight));
-  background: color-mix(in srgb, var(--error) 28%, var(--surface-2));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--error) 35%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 80%, var(--highlight));
+  background: color-mix(in srgb, var(--accent) 30%, var(--surface-2));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .letter-cell.path-start input,
 .letter-cell.path-start > span {
+  color: var(--accent);
+}
+
+.letter-cell.path-end {
+  border-color: color-mix(in srgb, var(--error) 80%, var(--highlight));
+  background: color-mix(in srgb, var(--error) 30%, var(--surface-2));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--error) 40%, transparent);
+}
+
+.letter-cell.path-end input,
+.letter-cell.path-end > span {
   color: var(--error);
 }
 
 .letter-cell-step--start {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.letter-cell-step--end {
   background: var(--error);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--error) 45%, transparent);
 }

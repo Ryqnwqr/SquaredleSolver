@@ -25,6 +25,10 @@ const FIXTURES = {
   dark5x5Teal:   { image: "dark-5x5-teal.png",       rows: 5, cols: 5 },
   light4x4Hints: { image: "light-4x4-hints.png",     rows: 4, cols: 4 },
   light5x5Cut:   { image: "light-5x5-cornercut.png", rows: 5, cols: 5 },
+  // Negative fixtures — these are NOT Squaredle puzzles; detection should
+  // reject them rather than return a fabricated grid.
+  ngText:        { image: "_negative-text.png",       rows: 0, cols: 0, reject: true },
+  ngBlank:       { image: "_negative-blank.png",      rows: 0, cols: 0, reject: true },
 };
 
 const argv = process.argv.slice(2);
@@ -69,17 +73,41 @@ try {
     const result = await page.evaluate(async ({ src, diag }) => {
       if (diag) (globalThis).__GRID_DIAG__ = true;
       const { detectGridLayout } = await import("/src/lib/gridDetect.ts");
-      const d = await detectGridLayout(src); // no hint — like Auto in UI
-      return {
-        rows: d.rows,
-        cols: d.cols,
-        method: d.method,
-        theme: d.theme,
-        confidence: d.confidence,
-        active: d.cells.flat().filter((c) => c.active).length,
-      };
+      try {
+        const d = await detectGridLayout(src); // no hint — like Auto in UI
+        return {
+          ok: true,
+          rows: d.rows,
+          cols: d.cols,
+          method: d.method,
+          theme: d.theme,
+          confidence: d.confidence,
+          active: d.cells.flat().filter((c) => c.active).length,
+        };
+      } catch (e) {
+        return { ok: false, error: e?.message ?? String(e) };
+      }
     }, { src: dataUrl, diag: !!process.env.GRID_DIAG });
 
+    if (fixture.reject) {
+      const rejected = !result.ok;
+      const marker = rejected ? "OK  " : "FAIL";
+      console.log(
+        `${marker} ${key.padEnd(13)} ${
+          rejected
+            ? "rejected (expected): " + (result.error ?? "")
+            : `got ${result.rows}×${result.cols} method=${result.method}  (should have rejected)`
+        }`
+      );
+      if (!rejected) failures++;
+      continue;
+    }
+
+    if (!result.ok) {
+      console.log(`FAIL ${key.padEnd(13)} detection threw: ${result.error}`);
+      failures++;
+      continue;
+    }
     const ok = result.rows === fixture.rows && result.cols === fixture.cols;
     const marker = ok ? "OK  " : "FAIL";
     console.log(

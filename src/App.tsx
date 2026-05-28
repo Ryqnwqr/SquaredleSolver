@@ -5,7 +5,9 @@ import { LetterGrid } from "./components/LetterGrid";
 import { WordResults } from "./components/WordResults";
 import {
   clipboardHasTextOnly,
+  dragEventHasImage,
   getClipboardImageFile,
+  getDataTransferImageFile,
   isTextInputTarget,
 } from "./lib/clipboardPaste";
 import {
@@ -13,7 +15,7 @@ import {
   loadDictionary,
   type DictionaryMode,
 } from "./lib/dictionary";
-import { BLOCKED } from "./lib/gridDetect";
+import { BLOCKED, NotAPuzzleError } from "./lib/gridDetect";
 import { normalizeOcrToLetter } from "./lib/letterNormalize";
 import { extractGridFromImage, type OcrProgress } from "./lib/ocr";
 import {
@@ -55,6 +57,8 @@ export default function App() {
     useState<DictionarySource>("freeDictionary");
   const [error, setError] = useState<string | null>(null);
   const [formatToast, setFormatToast] = useState(false);
+  const [uploadDragOver, setUploadDragOver] = useState(false);
+  const uploadDragDepthRef = useRef(0);
   const handleImageUploadRef = useRef<(file: File) => void>(() => {});
 
   useEffect(() => {
@@ -178,10 +182,19 @@ export default function App() {
           setWords(findAllWords(normalized, trie.getRoot()));
           setSelectedWord(null);
         }
-      } catch {
-        setError(
-          "Could not read the image. Try another screenshot or edit the grid manually."
-        );
+      } catch (err) {
+        if (err instanceof NotAPuzzleError) {
+          // Specific message for non-puzzle inputs so the user knows the
+          // upload was clearly understood as "not a Squaredle screenshot"
+          // rather than a generic decode failure.
+          setError(
+            "This doesn't look like a Squaredle puzzle. Upload or paste a screenshot of the puzzle grid."
+          );
+        } else {
+          setError(
+            "Could not read the image. Try another screenshot or edit the grid manually."
+          );
+        }
         setOcrProgress(null);
       } finally {
         setBusy(false);
@@ -200,6 +213,59 @@ export default function App() {
   };
 
   const dismissFormatToast = useCallback(() => setFormatToast(false), []);
+
+  const onUploadDragEnter = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (busy || !dictReady) return;
+      if (!dragEventHasImage(e.dataTransfer)) return;
+      uploadDragDepthRef.current += 1;
+      setUploadDragOver(true);
+    },
+    [busy, dictReady]
+  );
+
+  const onUploadDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    uploadDragDepthRef.current -= 1;
+    if (uploadDragDepthRef.current <= 0) {
+      uploadDragDepthRef.current = 0;
+      setUploadDragOver(false);
+    }
+  }, []);
+
+  const onUploadDragOver = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (busy || !dictReady) return;
+      if (dragEventHasImage(e.dataTransfer)) {
+        e.dataTransfer.dropEffect = "copy";
+      } else {
+        e.dataTransfer.dropEffect = "none";
+      }
+    },
+    [busy, dictReady]
+  );
+
+  const onUploadDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      uploadDragDepthRef.current = 0;
+      setUploadDragOver(false);
+      if (busy || !dictReady) return;
+      const file = getDataTransferImageFile(e.dataTransfer);
+      if (file) {
+        handleImageUploadRef.current(file);
+      } else {
+        setFormatToast(true);
+      }
+    },
+    [busy, dictReady]
+  );
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -300,7 +366,13 @@ export default function App() {
             </select>
           </label>
 
-          <label className="upload-zone">
+          <label
+            className={`upload-zone${uploadDragOver ? " upload-zone--dragover" : ""}`}
+            onDragEnter={onUploadDragEnter}
+            onDragLeave={onUploadDragLeave}
+            onDragOver={onUploadDragOver}
+            onDrop={onUploadDrop}
+          >
             <input
               type="file"
               accept="image/*"
@@ -311,10 +383,15 @@ export default function App() {
                 e.target.value = "";
               }}
             />
-            <span className="upload-label">{progressLabel}</span>
+            <span className="upload-label">
+              {uploadDragOver
+                ? "Release to upload"
+                : progressLabel}
+            </span>
             <span className="upload-hint">
-              Or paste a screenshot with Ctrl+V · supports corner-cut and irregular
-              grids
+              {uploadDragOver
+                ? "Drop your puzzle screenshot here"
+                : "Drag and drop, click to browse, or paste with Ctrl+V / ⌘V · supports corner-cut and irregular grids"}
             </span>
           </label>
 

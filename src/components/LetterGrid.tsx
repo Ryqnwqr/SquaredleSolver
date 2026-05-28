@@ -64,6 +64,11 @@ export function LetterGrid({
 
   const pathStartKey =
     validPath.length > 0 ? `${validPath[0].row},${validPath[0].col}` : null;
+  const pathEndKey =
+    validPath.length > 0
+      ? `${validPath[validPath.length - 1].row},${validPath[validPath.length - 1].col}`
+      : null;
+  const pathLastIndex = validPath.length - 1;
 
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
@@ -168,6 +173,7 @@ export function LetterGrid({
             const blocked = letter === BLOCKED;
             const highlighted = highlightSet.has(key);
             const isPathStart = key === pathStartKey;
+            const isPathEnd = key === pathEndKey && key !== pathStartKey;
             return (
               <div
                 key={key}
@@ -175,7 +181,7 @@ export function LetterGrid({
                   if (el) cellRefs.current.set(key, el);
                   else cellRefs.current.delete(key);
                 }}
-                className={`letter-cell${blocked ? " blocked" : ""}${highlighted ? " highlighted" : ""}${isPathStart ? " path-start" : ""}`}
+                className={`letter-cell${blocked ? " blocked" : ""}${highlighted ? " highlighted" : ""}${isPathStart ? " path-start" : ""}${isPathEnd ? " path-end" : ""}`}
                 aria-hidden={blocked}
               >
                 {blocked ? null : editable ? (
@@ -242,7 +248,7 @@ export function LetterGrid({
             return (
               <span
                 key={key}
-                className={`letter-cell-step${i === 0 ? " letter-cell-step--start" : ""}`}
+                className={`letter-cell-step${i === 0 ? " letter-cell-step--start" : ""}${i === pathLastIndex && pathLastIndex > 0 ? " letter-cell-step--end" : ""}`}
                 style={{ left: pos.x, top: pos.y }}
               >
                 {i + 1}
