@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CustomSelect } from "./CustomSelect";
 import { FormatToast } from "./FormatToast";
-import { SiteLogo } from "./SiteLogo";
 import { LetterGrid } from "./LetterGrid";
 import { WordResults } from "./WordResults";
 import {
@@ -303,10 +303,7 @@ export function SolverApp() {
         <div className="header-brand">
           <div className="header-copy">
             <p className="eyebrow">Word search assistant</p>
-            <div className="header-title-row">
-              <SiteLogo className="site-logo" />
-              <h1>Squaredle Solver</h1>
-            </div>
+            <h1 className="header-title">Squaredle Solver</h1>
             <p className="subtitle">
               Upload a screenshot — the app detects grid shape automatically
               (4×4, 5×5, corner-cut layouts, and more). Fix any misread letters,
@@ -328,35 +325,30 @@ export function SolverApp() {
 
           <label className="field">
             <span>Word list</span>
-            <select
+            <CustomSelect
               value={dictMode}
-              onChange={(e) => setDictMode(e.target.value as DictionaryMode)}
+              onChange={setDictMode}
               disabled={busy || dictLoading}
-            >
-              {(Object.keys(DICTIONARY_LABELS) as DictionaryMode[]).map(
-                (mode) => (
-                  <option key={mode} value={mode}>
-                    {DICTIONARY_LABELS[mode]}
-                  </option>
-                )
+              options={(Object.keys(DICTIONARY_LABELS) as DictionaryMode[]).map(
+                (mode) => ({ value: mode, label: DICTIONARY_LABELS[mode] })
               )}
-            </select>
+            />
           </label>
 
           <label className="field">
             <span>Grid size hint</span>
-            <select
-              value={sizeHint}
-              onChange={(e) => applySizeHint(Number(e.target.value))}
+            <CustomSelect
+              value={String(sizeHint)}
+              onChange={(v) => applySizeHint(Number(v))}
               disabled={busy}
-            >
-              <option value={AUTO_SIZE}>Auto-detect from image</option>
-              {[3, 4, 5, 6, 7].map((n) => (
-                <option key={n} value={n}>
-                  {n}×{n} (square)
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: String(AUTO_SIZE), label: "Auto-detect from image" },
+                ...[3, 4, 5, 6, 7].map((n) => ({
+                  value: String(n),
+                  label: `${n}×${n} (square)`,
+                })),
+              ]}
+            />
           </label>
 
           <label

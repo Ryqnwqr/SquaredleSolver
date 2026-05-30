@@ -1,5 +1,5 @@
-import { SolverApp } from "@/components/SolverApp";
+import { redirect } from "next/navigation";
 
 export default function HomePage() {
-  return <SolverApp />;
+  redirect("/solver");
 }

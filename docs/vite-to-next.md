@@ -5,7 +5,8 @@
 | Before (Vite) | After (Next.js) |
 |---------------|-----------------|
 | `index.html` + `src/main.tsx` | `app/layout.tsx` (HTML shell, fonts, favicon metadata) |
-| `src/App.tsx` | `src/components/SolverApp.tsx` (`"use client"`) |
+| `src/App.tsx` | `src/components/SolverApp.tsx` (`"use client"`) at `/solver` |
+| (root route) | `app/page.tsx` redirects `/` → `/solver` |
 | `src/App.css` | Imported from `app/layout.tsx` (global styles) |
 | `vite.config.ts` | `next.config.ts` |
 | Dev server port `5173` | `3000` (default) |
@@ -30,7 +31,7 @@ If you add auth or APIs later, use `.env.local` and document them in a new `.env
 
 ```bash
 npm install
-npm run dev          # http://localhost:3000
+npm run dev          # http://localhost:3000/solver
 npm run build        # builds NWL list, then `next build`
 npm run start        # production server (after build)
 npm run preview      # alias for `next start`

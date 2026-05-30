@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CustomSelect } from "./CustomSelect";
 import {
   DICTIONARY_SOURCE_LABELS,
   formatPartOfSpeech,
@@ -75,21 +76,17 @@ export function WordDefinition({
         <h3 className="word-definition__label">Definition</h3>
         <label className="word-definition__source-field">
           <span className="word-definition__source-prompt">Preferred source:</span>
-          <select
-            className="word-definition__source-select"
+          <CustomSelect
+            variant="pill"
             value={definitionSource}
-            onChange={(e) =>
-              onDefinitionSourceChange(e.target.value as DictionarySource)
-            }
-          >
-            {(Object.keys(DICTIONARY_SOURCE_LABELS) as DictionarySource[]).map(
-              (source) => (
-                <option key={source} value={source}>
-                  {DICTIONARY_SOURCE_LABELS[source]}
-                </option>
-              )
-            )}
-          </select>
+            onChange={onDefinitionSourceChange}
+            options={(
+              Object.keys(DICTIONARY_SOURCE_LABELS) as DictionarySource[]
+            ).map((source) => ({
+              value: source,
+              label: DICTIONARY_SOURCE_LABELS[source],
+            }))}
+          />
         </label>
       </div>
 

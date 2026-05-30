@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { TopBar } from "@/components/TopBar";
 import "@/App.css";
 
 export const metadata: Metadata = {
@@ -34,7 +35,10 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <TopBar />
+        {children}
+      </body>
     </html>
   );
 }

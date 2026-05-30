@@ -18,7 +18,7 @@ npm install
 npm run dev
 ```
 
-Open the URL shown in the terminal (usually http://localhost:3000).
+Open the URL shown in the terminal (usually http://localhost:3000/solver).
 
 See [docs/vite-to-next.md](docs/vite-to-next.md) for stack and test details.
 
