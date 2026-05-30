@@ -1,34 +1,33 @@
+"use client";
+
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FormatToast } from "./components/FormatToast";
-import { SiteLogo } from "./components/SiteLogo";
-import { LetterGrid } from "./components/LetterGrid";
-import { WordResults } from "./components/WordResults";
+import { FormatToast } from "./FormatToast";
+import { SiteLogo } from "./SiteLogo";
+import { LetterGrid } from "./LetterGrid";
+import { WordResults } from "./WordResults";
 import {
   clipboardHasTextOnly,
   dragEventHasImage,
   getClipboardImageFile,
   getDataTransferImageFile,
   isTextInputTarget,
-} from "./lib/clipboardPaste";
+} from "@/lib/clipboardPaste";
 import {
   DICTIONARY_LABELS,
   loadDictionary,
   type DictionaryMode,
-} from "./lib/dictionary";
-import { BLOCKED, NotAPuzzleError } from "./lib/gridDetect";
-import { normalizeOcrToLetter } from "./lib/letterNormalize";
-import { extractGridFromImage, type OcrProgress } from "./lib/ocr";
-import {
-  type DictionarySource,
-} from "./lib/dictionaryLookup";
+} from "@/lib/dictionary";
+import { BLOCKED, NotAPuzzleError } from "@/lib/gridDetect";
+import { normalizeOcrToLetter } from "@/lib/letterNormalize";
+import { extractGridFromImage, type OcrProgress } from "@/lib/ocr";
+import { type DictionarySource } from "@/lib/dictionaryLookup";
 import {
   findAllWords,
   isPlayableCell,
   normalizeGrid,
   type FoundWord,
-} from "./lib/solver";
-import type { Trie } from "./lib/trie";
-import "./App.css";
+} from "@/lib/solver";
+import type { Trie } from "@/lib/trie";
 
 const AUTO_SIZE = 0;
 
@@ -38,7 +37,7 @@ function emptyGrid(rows: number, cols: number): string[][] {
   );
 }
 
-export default function App() {
+export function SolverApp() {
   const [dictMode, setDictMode] = useState<DictionaryMode>("nwl2023");
   const [dictReady, setDictReady] = useState(false);
   const [dictLoading, setDictLoading] = useState(true);
@@ -156,9 +155,6 @@ export default function App() {
     reader.onload = async () => {
       try {
         const src = reader.result as string;
-        // Show the raw upload immediately so the user has something to look
-        // at while OCR runs; we'll swap to the smart-cropped grid preview
-        // when detection finishes.
         setImagePreview(src);
         const hint = sizeHint > 0 ? sizeHint : undefined;
         const {
@@ -184,9 +180,6 @@ export default function App() {
         }
       } catch (err) {
         if (err instanceof NotAPuzzleError) {
-          // Specific message for non-puzzle inputs so the user knows the
-          // upload was clearly understood as "not a Squaredle screenshot"
-          // rather than a generic decode failure.
           setError(
             "This doesn't look like a Squaredle puzzle. Upload or paste a screenshot of the puzzle grid."
           );
@@ -296,11 +289,11 @@ export default function App() {
   const progressLabel =
     busy && ocrProgress
       ? ocrProgress.stage === "analyzing"
-        ? ocrProgress.detail ?? "Analyzing grid…"
+        ? (ocrProgress.detail ?? "Analyzing grid…")
         : ocrProgress.stage === "loading"
           ? "Loading OCR…"
-          : ocrProgress.detail ??
-            `Scanning ${ocrProgress.current} / ${ocrProgress.total}`
+          : (ocrProgress.detail ??
+            `Scanning ${ocrProgress.current} / ${ocrProgress.total}`)
       : "Upload puzzle screenshot";
 
   return (
@@ -315,9 +308,9 @@ export default function App() {
               <h1>Squaredle Solver</h1>
             </div>
             <p className="subtitle">
-            Upload a screenshot — the app detects grid shape automatically
-            (4×4, 5×5, corner-cut layouts, and more). Fix any misread letters,
-            then find all valid words.
+              Upload a screenshot — the app detects grid shape automatically
+              (4×4, 5×5, corner-cut layouts, and more). Fix any misread letters,
+              then find all valid words.
             </p>
           </div>
         </div>
@@ -384,9 +377,7 @@ export default function App() {
               }}
             />
             <span className="upload-label">
-              {uploadDragOver
-                ? "Release to upload"
-                : progressLabel}
+              {uploadDragOver ? "Release to upload" : progressLabel}
             </span>
             <span className="upload-hint">
               {uploadDragOver
@@ -442,11 +433,53 @@ export default function App() {
             {pendingAutoGrid ? (
               <div className="grid-pending" aria-live="polite">
                 <span className="grid-pending__icon" aria-hidden>
-                  <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect x="4" y="4" width="11" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
-                    <rect x="17" y="4" width="11" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" opacity="0.5" />
-                    <rect x="4" y="17" width="11" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" opacity="0.5" />
-                    <rect x="17" y="17" width="11" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" opacity="0.5" />
+                  <svg
+                    viewBox="0 0 32 32"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <rect
+                      x="4"
+                      y="4"
+                      width="11"
+                      height="11"
+                      rx="2.5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    />
+                    <rect
+                      x="17"
+                      y="4"
+                      width="11"
+                      height="11"
+                      rx="2.5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeDasharray="3 2"
+                      opacity="0.5"
+                    />
+                    <rect
+                      x="4"
+                      y="17"
+                      width="11"
+                      height="11"
+                      rx="2.5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeDasharray="3 2"
+                      opacity="0.5"
+                    />
+                    <rect
+                      x="17"
+                      y="17"
+                      width="11"
+                      height="11"
+                      rx="2.5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeDasharray="3 2"
+                      opacity="0.5"
+                    />
                   </svg>
                 </span>
                 <p className="grid-pending__title">
@@ -493,6 +526,7 @@ export default function App() {
             onFilterChange={setFilter}
             definitionSource={definitionSource}
             onDefinitionSourceChange={setDefinitionSource}
+            loading={dictLoading || (busy && words.length === 0)}
           />
         </section>
       </main>

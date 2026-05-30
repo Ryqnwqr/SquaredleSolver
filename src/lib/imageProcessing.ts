@@ -279,6 +279,73 @@ export interface Blob {
 }
 
 /**
+ * Group blob indices by 1D position (X or Y) with a tolerance threshold.
+ * Each row of the returned array is the list of blob indices belonging to
+ * one cluster — sorted by ascending cluster center.
+ */
+function groupBlobsByAxis(
+  blobs: Blob[],
+  axis: (b: Blob) => number,
+  tolerance: number
+): number[][] {
+  const indexed = blobs.map((b, i) => ({ i, v: axis(b) }));
+  indexed.sort((a, b) => a.v - b.v);
+  const groups: { center: number; idx: number[]; sum: number }[] = [];
+  for (const { i, v } of indexed) {
+    const g = groups[groups.length - 1];
+    if (g && Math.abs(v - g.center) <= tolerance) {
+      g.idx.push(i);
+      g.sum += v;
+      g.center = g.sum / g.idx.length;
+    } else {
+      groups.push({ center: v, idx: [i], sum: v });
+    }
+  }
+  return groups.map((g) => g.idx);
+}
+
+/**
+ * Drop blobs that don't belong to a dense row+column pattern. For an image
+ * mixing a puzzle grid with surrounding UI chrome (header text, side panel,
+ * captions), the puzzle letters cluster into densely-populated rows and
+ * columns whereas chrome text scatters into sparse rows of 1–2 blobs each.
+ * Keeping only blobs in "majority" clusters yields a clean puzzle subset.
+ */
+function pruneToGridPattern(blobs: Blob[]): Blob[] {
+  if (blobs.length < 9) return blobs;
+  const heights = blobs.map((b) => b.h).sort((a, b) => a - b);
+  const medH = heights[heights.length >> 1];
+  const widths = blobs.map((b) => b.w).sort((a, b) => a - b);
+  const medW = widths[widths.length >> 1];
+  const tol = Math.max(medH, medW) * 0.6;
+
+  const cullByAxis = (input: Blob[], axis: (b: Blob) => number): Blob[] => {
+    if (input.length < 9) return input;
+    const groups = groupBlobsByAxis(input, axis, tol);
+    if (groups.length < 3) return input;
+    const groupSizes = groups.map((g) => g.length).sort((a, b) => a - b);
+    const medGroupSize = groupSizes[groupSizes.length >> 1];
+    // Drop singleton/sparse rows or columns whenever the puzzle's dominant
+    // groups are clearly larger. A row/col with fewer than half the median
+    // group size is almost certainly UI chrome (a stray "Squaredle" header
+    // letter, side-panel chip text, etc.) rather than puzzle content.
+    const minKeep = Math.max(2, Math.floor(medGroupSize * 0.5));
+    if (minKeep <= 1) return input; // dominant groups too sparse to discriminate
+    const keep = new Set<number>();
+    for (const group of groups) {
+      if (group.length >= minKeep) {
+        for (const i of group) keep.add(i);
+      }
+    }
+    return keep.size >= 9 ? input.filter((_, i) => keep.has(i)) : input;
+  };
+
+  let kept = cullByAxis(blobs, (b) => b.cy);
+  kept = cullByAxis(kept, (b) => b.cx);
+  return kept.length >= 9 ? kept : blobs;
+}
+
+/**
  * Color-scheme-agnostic letter detection.
  *
  * Letters are the one signal that must be high-contrast against tile
@@ -321,15 +388,38 @@ export function findLetterBlobsRobust(
 
   for (const { bin, polarity } of variants) {
     const raw = findLetterBlobs(bin, width, height);
-    // Filter to plausibly letter-sized
-    const filtered = raw.filter(
+    // First pass: size envelope.
+    let filtered = raw.filter(
       (b) =>
         b.area >= minLetterArea &&
         b.area <= maxLetterArea &&
         b.w >= 4 &&
-        b.h >= 6
+        b.h >= 6 &&
+        // Density (ink area / bbox area). Real glyphs are 0.2–0.5 dense;
+        // tile-outline rings produced by adaptive thresholding around
+        // shadowed squircle tiles are 0.05–0.10. Rejecting <0.14 strips
+        // those out so letter-blob counts and clusters reflect actual
+        // glyphs, not tile chrome.
+        b.area / (b.w * b.h) >= 0.14
     );
     if (filtered.length < 9 || filtered.length > 60) continue;
+    // Second pass: cull blobs whose bbox is far larger than the median
+    // (catches multi-letter merges or large icon/UI elements that slipped
+    // through the absolute size envelope).
+    const sizes = filtered
+      .map((b) => Math.max(b.w, b.h))
+      .sort((a, b) => a - b);
+    const medSize = sizes[sizes.length >> 1] || 1;
+    const refined = filtered.filter(
+      (b) => Math.max(b.w, b.h) <= medSize * 2.2
+    );
+    if (refined.length >= 9 && refined.length <= 60) filtered = refined;
+    // Third pass: drop blobs not belonging to a dense row+column cluster.
+    // Required to ignore UI chrome (headers, side-panel chips) when a full
+    // app screenshot is uploaded — those chrome blobs scatter into sparse
+    // single-blob rows that don't match the puzzle's dense N×N pattern.
+    filtered = pruneToGridPattern(filtered);
+    if (filtered.length < 9) continue;
     const score = scoreLetterGrid(filtered, width, height);
     if (!best || score > best.score) {
       best = { blobs: filtered, polarity, score };

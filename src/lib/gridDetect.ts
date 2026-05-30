@@ -693,13 +693,54 @@ function refineCellsWithBlobs(
 }
 
 function cropToPuzzleRegion(frame: ImageFrame, blobs: Blob[]): ImageFrame {
-  if (blobs.length < 4) return frame;
+  // Prefer the pruned letter-blob set (drops UI chrome / side-panel text)
+  // over the legacy tile-finder bbox: the legacy union can be much wider
+  // than the actual puzzle when the screenshot includes app UI around it.
+  let cropBlobs: { x: number; y: number; w: number; h: number; cx: number; cy: number }[] =
+    blobs;
+  let padX = 12;
+  let padY = 12;
+  const letters = findLetterBlobsRobust(frame.data).blobs;
+  if (letters.length >= 9) {
+    cropBlobs = letters;
+    // Pad by ~half the inter-cluster pitch (≈ tile size) so the cropped
+    // frame still contains the full tile around each letter — otherwise
+    // tile-color detection clips edges and miscounts cells.
+    const heights = letters.map((b) => b.h).sort((a, b) => a - b);
+    const medH = heights[heights.length >> 1] || 1;
+    const xCenters = cluster1D(
+      letters.map((b) => b.cx),
+      medH * 0.7
+    ).sort((a, b) => a - b);
+    const yCenters = cluster1D(
+      letters.map((b) => b.cy),
+      medH * 0.7
+    ).sort((a, b) => a - b);
+    const xPitch =
+      xCenters.length >= 2
+        ? (xCenters[xCenters.length - 1] - xCenters[0]) /
+          (xCenters.length - 1)
+        : medH * 2;
+    const yPitch =
+      yCenters.length >= 2
+        ? (yCenters[yCenters.length - 1] - yCenters[0]) /
+          (yCenters.length - 1)
+        : medH * 2;
+    padX = Math.max(20, Math.round(xPitch * 0.55));
+    padY = Math.max(20, Math.round(yPitch * 0.55));
+  }
+  if (cropBlobs.length < 4) return frame;
 
-  const pad = 12;
-  const minX = Math.max(0, Math.min(...blobs.map((b) => b.x)) - pad);
-  const minY = Math.max(0, Math.min(...blobs.map((b) => b.y)) - pad);
-  const maxX = Math.min(frame.width, Math.max(...blobs.map((b) => b.x + b.w)) + pad);
-  const maxY = Math.min(frame.height, Math.max(...blobs.map((b) => b.y + b.h)) + pad);
+  const minX = Math.max(0, Math.min(...cropBlobs.map((b) => b.x)) - padX);
+  const minY = Math.max(0, Math.min(...cropBlobs.map((b) => b.y)) - padY);
+  const maxX = Math.min(
+    frame.width,
+    Math.max(...cropBlobs.map((b) => b.x + b.w)) + padX
+  );
+  const maxY = Math.min(
+    frame.height,
+    Math.max(...cropBlobs.map((b) => b.y + b.h)) + padY
+  );
   const w = maxX - minX;
   const h = maxY - minY;
 

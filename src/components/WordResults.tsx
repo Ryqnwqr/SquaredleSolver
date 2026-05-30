@@ -1,6 +1,7 @@
 import type { DictionarySource } from "../lib/dictionaryLookup";
 import type { FoundWord } from "../lib/solver";
 import { WordDefinition } from "./WordDefinition";
+import { WordListLoader } from "./WordListLoader";
 
 interface WordResultsProps {
   words: FoundWord[];
@@ -10,6 +11,7 @@ interface WordResultsProps {
   onFilterChange: (value: string) => void;
   definitionSource: DictionarySource;
   onDefinitionSourceChange: (source: DictionarySource) => void;
+  loading?: boolean;
 }
 
 export function WordResults({
@@ -20,6 +22,7 @@ export function WordResults({
   onFilterChange,
   definitionSource,
   onDefinitionSourceChange,
+  loading = false,
 }: WordResultsProps) {
   const q = filter.trim().toLowerCase();
   const filtered = q
@@ -51,33 +54,43 @@ export function WordResults({
           className="filter-input"
         />
       </div>
-      <div className="word-list" role="list">
-        {lengths.map((len) => (
-          <section key={len} className="length-group">
-            <h3>{len} letters</h3>
-            <ul>
-              {byLength[len].map((item) => (
-                <li key={item.word}>
-                  <button
-                    type="button"
-                    className={
-                      selectedWord?.word === item.word ? "selected" : undefined
-                    }
-                    onClick={() =>
-                      onSelect(
-                        selectedWord?.word === item.word ? null : item
-                      )
-                    }
-                  >
-                    {item.word}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-        {filtered.length === 0 && (
-          <p className="empty">No words match your filter.</p>
+      <div
+        className={`word-list${loading ? " word-list--loading" : ""}`}
+        role="list"
+        aria-busy={loading}
+      >
+        {loading ? (
+          <WordListLoader />
+        ) : (
+          <>
+            {lengths.map((len) => (
+              <section key={len} className="length-group">
+                <h3>{len} letters</h3>
+                <ul>
+                  {byLength[len].map((item) => (
+                    <li key={item.word}>
+                      <button
+                        type="button"
+                        className={
+                          selectedWord?.word === item.word ? "selected" : undefined
+                        }
+                        onClick={() =>
+                          onSelect(
+                            selectedWord?.word === item.word ? null : item
+                          )
+                        }
+                      >
+                        {item.word}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+            {filtered.length === 0 && (
+              <p className="empty">No words match your filter.</p>
+            )}
+          </>
         )}
       </div>
       <WordDefinition

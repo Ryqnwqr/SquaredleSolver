@@ -1,4 +1,4 @@
-import { createWorker, PSM, type Worker } from "tesseract.js";
+import type { Worker } from "tesseract.js";
 import { BLOCKED, detectGridLayout, type CellRegion, type GridDetection } from "./gridDetect";
 import type { FrameTheme } from "./imageProcessing";
 import { normalizeOcrToLetter } from "./letterNormalize";
@@ -24,6 +24,7 @@ let workerPromise: Promise<Worker> | null = null;
 async function getWorker(): Promise<Worker> {
   if (!workerPromise) {
     workerPromise = (async () => {
+      const { createWorker, PSM } = await import("tesseract.js");
       const worker = await createWorker("eng");
       await worker.setParameters({
         tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ",

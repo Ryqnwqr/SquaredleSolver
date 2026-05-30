@@ -98,6 +98,24 @@ const FIXTURES = {
       { r: 2, c: 3, letter: "N" },
     ],
   },
+  light4x4Clean: {
+    image: "light-4x4-clean.png",
+    hint: 4,
+    expected: ["SBOR", "AENE", "EEAT", "TGDO"],
+    critical: [
+      { r: 0, c: 0, letter: "S" },
+      { r: 3, c: 3, letter: "O" },
+    ],
+  },
+  lightUI4x4: {
+    image: "light-full-ui-4x4.png",
+    hint: 4,
+    expected: ["SBOR", "AENE", "EEAT", "TGDO"],
+    critical: [
+      { r: 0, c: 0, letter: "S" },
+      { r: 3, c: 3, letter: "O" },
+    ],
+  },
   light5x5Cut: {
     image: "light-5x5-cornercut.png",
     hint: 5,
@@ -160,7 +178,8 @@ if (!existsSync(IMAGE)) {
   process.exit(1);
 }
 
-const baseUrl = process.env.TEST_URL ?? "http://localhost:5173";
+const baseUrl =
+  process.env.TEST_URL ?? "http://localhost:3000/test-harness";
 const dataUrl = toDataUrl(IMAGE);
 
 const browser = await chromium.launch();
@@ -175,7 +194,9 @@ try {
   await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 60000 });
 
   await page.waitForFunction(
-    () => document.querySelector(".badge.ready") !== null,
+    () =>
+      window.__SS_TEST__?.extractGridFromImage &&
+      document.querySelector(".badge.ready") !== null,
     { timeout: 120000 }
   );
 
@@ -187,8 +208,7 @@ try {
   const result = await page.evaluate(
     async ({ src, hint, diag }) => {
       if (diag) (globalThis).__OCR_DIAG__ = true;
-      const { extractGridFromImage } = await import("/src/lib/ocr.ts");
-      const { normalizeGrid } = await import("/src/lib/solver.ts");
+      const { extractGridFromImage, normalizeGrid } = window.__SS_TEST__;
       const out = await extractGridFromImage(src, hint);
       return {
         grid: normalizeGrid(out.grid),

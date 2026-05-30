@@ -25,6 +25,8 @@ const FIXTURES = {
   dark5x5Teal:   { image: "dark-5x5-teal.png",       rows: 5, cols: 5 },
   light4x4Hints: { image: "light-4x4-hints.png",     rows: 4, cols: 4 },
   light5x5Cut:   { image: "light-5x5-cornercut.png", rows: 5, cols: 5 },
+  light4x4Clean: { image: "light-4x4-clean.png",     rows: 4, cols: 4 },
+  lightUI4x4:    { image: "light-full-ui-4x4.png",   rows: 4, cols: 4 },
   // Negative fixtures — these are NOT Squaredle puzzles; detection should
   // reject them rather than return a fabricated grid.
   ngText:        { image: "_negative-text.png",       rows: 0, cols: 0, reject: true },
@@ -37,7 +39,8 @@ const keys = runAll
   ? Object.keys(FIXTURES)
   : [process.env.TEST_FIXTURE ?? "dark4x4"];
 
-const baseUrl = process.env.TEST_URL ?? "http://localhost:5173";
+const baseUrl =
+  process.env.TEST_URL ?? "http://localhost:3000/test-harness";
 const browser = await chromium.launch();
 const page = await browser.newPage();
 
@@ -45,7 +48,9 @@ let failures = 0;
 try {
   await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 60000 });
   await page.waitForFunction(
-    () => document.querySelector(".badge.ready") !== null,
+    () =>
+      window.__SS_TEST__?.detectGridLayout &&
+      document.querySelector(".badge.ready") !== null,
     { timeout: 120000 }
   );
 
@@ -72,7 +77,7 @@ try {
     }
     const result = await page.evaluate(async ({ src, diag }) => {
       if (diag) (globalThis).__GRID_DIAG__ = true;
-      const { detectGridLayout } = await import("/src/lib/gridDetect.ts");
+      const { detectGridLayout } = window.__SS_TEST__;
       try {
         const d = await detectGridLayout(src); // no hint — like Auto in UI
         return {

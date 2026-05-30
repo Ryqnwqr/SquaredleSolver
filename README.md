@@ -18,14 +18,18 @@ npm install
 npm run dev
 ```
 
-Open the URL shown in the terminal (usually http://localhost:5173).
+Open the URL shown in the terminal (usually http://localhost:3000).
+
+See [docs/vite-to-next.md](docs/vite-to-next.md) for stack and test details.
 
 ## Build
 
 ```bash
 npm run build
-npm run preview
+npm run start
 ```
+
+(`npm run preview` is an alias for `npm run start`.)
 
 The build downloads and compiles the NWL2023 word list into `public/nwl2023.json`. To refresh it alone:
 

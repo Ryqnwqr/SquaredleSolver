@@ -76,9 +76,13 @@ html::-webkit-scrollbar-corner {
 }
 
 .app {
-  max-width: 1200px;
+  /* Wider cap so 1440px+ monitors don't show large empty side gutters. */
+  max-width: 1360px;
   margin: 0 auto;
-  padding: 2rem 0.45rem 3rem;
+  /* Fluid side padding: keeps Cursor's narrow embedded browser tight (the
+     0.45rem you originally set stays the effective minimum) while opening
+     up on real displays. Linear scale: ~600px → ~0.7rem, ~1280px → 1.6rem. */
+  padding: 2rem clamp(0.45rem, 1.8vw, 1.6rem) 3rem;
 }
 
 .format-toast {
@@ -766,6 +770,88 @@ html::-webkit-scrollbar-corner {
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
   background: var(--surface-2);
+}
+
+.word-list--loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.word-list-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 10rem;
+  padding: 2rem 0;
+}
+
+.word-list-loader__orbit {
+  position: relative;
+  width: 3.25rem;
+  height: 3.25rem;
+  animation: word-list-spin 1.05s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+.word-list-loader__orbit::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 12px color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.word-list-loader__dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin: -0.25rem 0 0 -0.25rem;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 65%, transparent);
+  transform: rotate(var(--angle)) translateY(-1.35rem);
+}
+
+.word-list-loader__dot:nth-child(1) {
+  --angle: 0deg;
+  opacity: 1;
+  transform: rotate(0deg) translateY(-1.35rem) scale(1.2);
+}
+
+.word-list-loader__dot:nth-child(2) {
+  --angle: 60deg;
+  opacity: 0.82;
+}
+
+.word-list-loader__dot:nth-child(3) {
+  --angle: 120deg;
+  opacity: 0.64;
+}
+
+.word-list-loader__dot:nth-child(4) {
+  --angle: 180deg;
+  opacity: 0.46;
+}
+
+.word-list-loader__dot:nth-child(5) {
+  --angle: 240deg;
+  opacity: 0.32;
+}
+
+.word-list-loader__dot:nth-child(6) {
+  --angle: 300deg;
+  opacity: 0.2;
+}
+
+@keyframes word-list-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .word-list {
